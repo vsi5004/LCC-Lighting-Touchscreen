@@ -1,0 +1,24 @@
+idf_component_register(
+    SRCS 
+        "main.c"
+        "app/scene_storage.c"
+        "ui/ui_common.c"
+        "ui/ui_main.c"
+        "ui/ui_manual.c"
+        "ui/ui_scenes.c"
+    INCLUDE_DIRS 
+        "."
+        "app"
+        "ui"
+    REQUIRES
+        driver
+        esp_lcd
+        esp_timer
+        fatfs
+        nvs_flash
+        board_drivers
+        espressif__esp_jpeg
+        lvgl__lvgl
+        json
+        # OpenMRN  # Temporarily disabled for testing
+)

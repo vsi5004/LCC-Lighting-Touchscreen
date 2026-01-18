@@ -1,0 +1,13 @@
+dependencies:
+  # LVGL 8.x from ESP-IDF component registry
+  lvgl/lvgl: "~8.3.0"
+  
+  # Touch controller support
+  espressif/esp_lcd_touch: "*"
+  espressif/esp_lcd_touch_gt911: "*"
+  
+  # JPEG decoder for splash screen
+  espressif/esp_jpeg: "*"
+  
+  # mDNS - required by OpenMRN
+  espressif/mdns: "*"

@@ -1,0 +1,3 @@
+[submodule "components/OpenMRN"]
+	path = components/OpenMRN
+	url = https://github.com/vsi5004/openmrn.git
