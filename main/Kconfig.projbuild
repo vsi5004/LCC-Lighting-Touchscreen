@@ -21,9 +21,11 @@ menu "LCC Lighting Controller Configuration"
 
         config LCD_RGB_BOUNCE_BUFFER_HEIGHT
             int "RGB Bounce Buffer Height"
-            default 10
+            default 480
             help
                 Height of the bounce buffer in pixels. Width matches LCD.
+                Use full screen height (480) for smooth animations without
+                horizontal banding during tab transitions.
     endmenu
 
     menu "LVGL Settings"

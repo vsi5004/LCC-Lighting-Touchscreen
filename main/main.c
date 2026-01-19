@@ -33,6 +33,8 @@
 
 // App modules
 #include "app/scene_storage.h"
+#include "app/lcc_node.h"
+#include "app/fade_controller.h"
 
 static const char *TAG = "main";
 
@@ -41,6 +43,7 @@ ch422g_handle_t s_ch422g = NULL;
 esp_lcd_panel_handle_t s_lcd_panel = NULL;
 esp_lcd_touch_handle_t s_touch = NULL;
 static waveshare_sd_handle_t s_sd_card = NULL;
+static bool s_sd_card_ok = false;
 
 /**
  * @brief Initialize I2C master bus
@@ -114,9 +117,11 @@ static esp_err_t init_hardware(void)
     ret = waveshare_sd_init(&sd_config, &s_sd_card);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to initialize SD card: %s", esp_err_to_name(ret));
-        // Continue without SD - will use defaults
+        s_sd_card_ok = false;
+        // Continue - we'll show error screen after LCD init
     } else {
         ESP_LOGI(TAG, "SD Card initialized successfully");
+        s_sd_card_ok = true;
     }
 
     ESP_LOGI(TAG, "Step 4: Initializing LCD Panel...");
@@ -374,6 +379,110 @@ static esp_err_t load_and_display_image(esp_lcd_panel_handle_t panel, const char
     return ESP_OK;
 }
 
+// ============================================================================
+// Lighting Task
+// ============================================================================
+
+/// Lighting task handle
+static TaskHandle_t s_lighting_task = NULL;
+
+/// Lighting task tick interval (ms) - 10ms for smooth fade interpolation
+#define LIGHTING_TASK_INTERVAL_MS  10
+
+/**
+ * @brief Lighting control task
+ * 
+ * Runs the fade controller state machine and handles LCC event transmission.
+ * Tick interval of 10ms combined with burst transmission of all 5 parameters
+ * provides smooth fades (100 steps per second, ~2.5 value change per step
+ * for a 10-second 0→255 fade).
+ */
+static void lighting_task(void *arg)
+{
+    ESP_LOGI(TAG, "Lighting task started");
+    
+    TickType_t last_wake = xTaskGetTickCount();
+    
+    while (1) {
+        // Process fade controller
+        fade_controller_tick();
+        
+        // Fixed delay for consistent timing
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(LIGHTING_TASK_INTERVAL_MS));
+    }
+}
+
+/**
+ * @brief Show SD card missing error screen
+ * 
+ * Displays a user-friendly error message when SD card is not detected.
+ * Loops forever checking for SD card insertion.
+ */
+static void show_sd_card_error_screen(void)
+{
+    ESP_LOGI(TAG, "Showing SD card error screen");
+    
+    // Initialize LVGL first so we can display the error
+    lv_disp_t *disp = NULL;
+    lv_indev_t *touch_indev = NULL;
+    esp_err_t ret = ui_init(&disp, &touch_indev);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize LVGL for error screen");
+        // Fall back to just logging
+        while (1) {
+            ESP_LOGE(TAG, "SD Card not detected! Please insert SD card and reboot.");
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    }
+    
+    // Create error screen with LVGL
+    ui_lock();
+    
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x1E1E1E), LV_PART_MAIN);  // Dark background
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);  // Ensure background is fully opaque
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);  // Disable scrolling
+    
+    // SD card icon (using warning symbol)
+    lv_obj_t *icon = lv_label_create(scr);
+    lv_label_set_text(icon, LV_SYMBOL_WARNING);
+    lv_obj_set_style_text_font(icon, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_set_style_text_color(icon, lv_color_hex(0xFF9800), LV_PART_MAIN);  // Orange warning
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -80);
+    
+    // Main error message
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text(title, "SD Card Not Detected");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);  // White
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -20);
+    
+    // Instructions
+    lv_obj_t *instructions = lv_label_create(scr);
+    lv_label_set_text(instructions, 
+        "Please insert an SD card with the required\n"
+        "configuration files and restart the device.\n\n"
+        "Required files:\n"
+        "  - nodeid.txt (LCC node ID)\n"
+        "  - scenes.json (lighting scenes)");
+    lv_obj_set_style_text_font(instructions, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(instructions, lv_color_hex(0xB0B0B0), LV_PART_MAIN);  // Light gray
+    lv_obj_set_style_text_align(instructions, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(instructions, LV_ALIGN_CENTER, 0, 70);
+    
+    ui_unlock();
+    
+    ESP_LOGE(TAG, "SD Card not detected - waiting for card insertion");
+    
+    // Loop forever - user must insert card and restart
+    // Note: We don't retry SD card init here because it interferes with the display
+    // (CH422G and SPI bus reinitialization can affect LCD operation)
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        ESP_LOGW(TAG, "SD Card missing - please insert card and restart device");
+    }
+}
+
 /**
  * @brief Application entry point
  */
@@ -411,6 +520,12 @@ void app_main(void)
         }
     }
 
+    // Check if SD card is present - show error screen if not
+    if (!s_sd_card_ok) {
+        show_sd_card_error_screen();
+        // This function never returns
+    }
+
     // Ensure scenes.json exists (create default if not)
     ensure_scenes_json_exists();
     
@@ -422,6 +537,47 @@ void app_main(void)
 
     // Show splash for specified duration (FR-001: within 1500ms)
     vTaskDelay(pdMS_TO_TICKS(3000));
+
+    // Initialize LCC/OpenMRN (FR-002)
+    // This reads node ID from /sdcard/nodeid.txt and initializes TWAI
+    ESP_LOGI(TAG, "Initializing LCC/OpenMRN...");
+    lcc_config_t lcc_cfg = LCC_CONFIG_DEFAULT();
+    ret = lcc_node_init(&lcc_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "LCC initialization failed: %s - continuing without LCC", 
+                 esp_err_to_name(ret));
+        // Continue without LCC - device can still function as standalone UI
+    } else {
+        ESP_LOGI(TAG, "LCC node initialized - Node ID: %012llX, Base Event: %016llX",
+                 (unsigned long long)lcc_node_get_node_id(),
+                 (unsigned long long)lcc_node_get_base_event_id());
+    }
+
+    // Initialize fade controller
+    ESP_LOGI(TAG, "Initializing fade controller...");
+    ret = fade_controller_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Fade controller init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Fade controller initialized");
+    }
+
+    // Create lighting task to run fade controller
+    ESP_LOGI(TAG, "Starting lighting task...");
+    BaseType_t task_ret = xTaskCreatePinnedToCore(
+        lighting_task,
+        "lighting",
+        4096,           // Stack size (per ARCHITECTURE.md)
+        NULL,
+        4,              // Priority 4 (per ARCHITECTURE.md)
+        &s_lighting_task,
+        tskNO_AFFINITY  // Run on any core
+    );
+    if (task_ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create lighting task");
+    } else {
+        ESP_LOGI(TAG, "Lighting task started");
+    }
 
     // Initialize LVGL
     ESP_LOGI(TAG, "Initializing LVGL...");
@@ -447,14 +603,61 @@ void app_main(void)
     scene_storage_reload_ui();
     ESP_LOGI(TAG, "Scenes loaded");
 
-    // TODO: Initialize OpenMRN/LCC
-    // TODO: Load configuration from SD card
+    // Auto-apply first scene on boot if enabled
+    if (lcc_node_get_auto_apply_enabled()) {
+        ui_scene_t first_scene;
+        if (scene_storage_get_first(&first_scene) == ESP_OK) {
+            uint16_t duration_sec = lcc_node_get_auto_apply_duration_sec();
+            ESP_LOGI(TAG, "Auto-applying first scene '%s' over %u seconds",
+                     first_scene.name, duration_sec);
+            
+            // Set initial state to all zeros (assume lights are off at boot)
+            lighting_state_t initial_state = {
+                .brightness = 0,
+                .red = 0,
+                .green = 0,
+                .blue = 0,
+                .white = 0
+            };
+            fade_controller_set_current(&initial_state);
+            
+            // Start fade to first scene
+            fade_params_t params = {
+                .target = {
+                    .brightness = first_scene.brightness,
+                    .red = first_scene.red,
+                    .green = first_scene.green,
+                    .blue = first_scene.blue,
+                    .white = first_scene.white
+                },
+                .duration_ms = (uint32_t)duration_sec * 1000
+            };
+            
+            esp_err_t fade_ret = fade_controller_start(&params);
+            if (fade_ret != ESP_OK) {
+                ESP_LOGW(TAG, "Failed to start auto-apply fade: %s", esp_err_to_name(fade_ret));
+            } else {
+                // Start progress bar tracking (only if duration > 0)
+                if (duration_sec > 0) {
+                    ui_lock();
+                    ui_scenes_start_progress_tracking();
+                    ui_unlock();
+                }
+            }
+        } else {
+            ESP_LOGI(TAG, "No scenes available for auto-apply");
+        }
+    } else {
+        ESP_LOGI(TAG, "Auto-apply first scene is disabled");
+    }
 
     ESP_LOGI(TAG, "Initialization complete - entering main loop");
 
-    // Temporary: Keep alive with status
+    // Main loop: Report status periodically
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-        ESP_LOGI(TAG, "Heartbeat - Free heap: %lu bytes", esp_get_free_heap_size());
+        vTaskDelay(pdMS_TO_TICKS(10000));
+        ESP_LOGI(TAG, "Status - Free heap: %lu bytes, LCC: %s", 
+                 esp_get_free_heap_size(),
+                 lcc_node_get_status() == LCC_STATUS_RUNNING ? "running" : "not running");
     }
 }

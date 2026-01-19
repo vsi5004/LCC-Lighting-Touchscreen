@@ -6,11 +6,11 @@
 - Fade math with various deltas
 - Rounding accumulation (no drift)
 - Step count calculation
-- Interval clamping to 20ms minimum
+- Interval clamping to 10ms minimum
 
 ### Rate Limiter (`test_rate_limiter.c`)
-- Enforces ≥20ms spacing
-- Handles burst requests
+- Enforces ≥10ms spacing between transmission rounds
+- Burst transmission (all 5 params per round)
 - Timer accuracy within ±1ms
 
 ### Scene Manager (`test_scene_manager.c`)
@@ -21,8 +21,8 @@
 - Atomic save (simulate power loss)
 
 ### Config Manager (`test_config.c`)
-- Parse valid config.json
-- Parse with missing node_id
+- Parse valid nodeid.txt
+- Parse with invalid node ID format
 - Fallback to defaults
 
 ---
@@ -40,7 +40,7 @@
 | Test | Steps | Expected |
 |------|-------|----------|
 | IT-010 | Apply scene, 0s duration | Immediate 5 events |
-| IT-011 | Apply scene, 10s duration | Gradual fade, events ≥20ms apart |
+| IT-011 | Apply scene, 10s duration | Gradual fade, event rounds ≥10ms apart |
 | IT-012 | Apply during fade | Previous fade cancelled |
 | IT-013 | Apply same scene | No events (optimization) |
 
@@ -49,7 +49,15 @@
 |------|-------|----------|
 | IT-020 | Save scene, reboot | Scene appears in carousel |
 | IT-021 | Corrupt scenes.json | Fallback to empty scene list |
-| IT-022 | Missing config.json | Default node ID used |
+| IT-022 | Missing nodeid.txt | Default node ID used |
+
+### Auto-Apply on Boot
+| Test | Steps | Expected |
+|------|-------|----------|
+| IT-030 | Enable auto-apply, set 10s duration, reboot | First scene fades in over 10s, progress bar visible |
+| IT-031 | Disable auto-apply, reboot | No fade, lights remain off |
+| IT-032 | Enable auto-apply, no scenes saved | No fade occurs, no crash |
+| IT-033 | Auto-apply with 0s duration | First scene applied immediately |
 
 ---
 
@@ -57,7 +65,7 @@
 
 ### CAN Bus Verification
 - Use CAN analyzer (PCAN, Kvaser, etc.)
-- Verify ≥20ms spacing between all events
+- Verify ≥10ms spacing between transmission rounds (5 events per round)
 - Verify correct event IDs per INTERFACES.md §7
 - Verify 125 kbps bit rate
 

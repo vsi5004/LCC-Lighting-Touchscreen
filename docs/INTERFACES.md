@@ -61,9 +61,10 @@ Write `0x01` to address `0x24` to set output mode.
 ### SD Card Files
 | File | Purpose |
 |------|---------|
-| `/sdcard/config.json` | Node ID, base event ID |
-| `/sdcard/scenes.json` | Scene definitions |
-| `/sdcard/splashscreen.jpg` | Boot splash image |
+| `/sdcard/nodeid.txt` | LCC Node ID (plain text, dotted hex) |
+| `/sdcard/scenes.json` | Scene definitions (auto-created if missing) |
+| `/sdcard/splash.jpg` | Boot splash image |
+| `/sdcard/openmrn_config` | OpenMRN persistent config (auto-created) |
 
 ---
 
@@ -89,7 +90,8 @@ Write `0x01` to address `0x24` to set output mode.
 ### Frame Buffer
 - Location: PSRAM
 - Format: RGB565 (16-bit)
-- Double buffering recommended
+- Size: 800 × 480 × 2 bytes × 2 buffers = 1.5MB
+- Mode: Full-frame double buffering (eliminates horizontal banding during animations)
 
 ---
 
@@ -127,8 +129,12 @@ Write `0x01` to address `0x24` to set output mode.
 
 ## 7. LCC Event Mapping
 
+### Node ID
+Configured in `/sdcard/nodeid.txt` (12 hex digits, e.g., `050101012260`)
+
 ### Base Event ID
-Configured in `/sdcard/config.json`, default: `05.01.01.01.22.60.00.00`
+Configured via LCC CDI, stored in `/sdcard/openmrn_config` at offset 132.
+Default: `05.01.01.01.22.60.00.00`
 
 ### Parameter Offsets
 | Parameter | Offset (byte 6) | Event ID Example |
@@ -148,4 +154,5 @@ Where `xx` is the parameter value (0x00–0xFF).
 4. Blue
 5. White
 
-Minimum interval between events: 20ms
+Minimum interval between transmission rounds: 10ms
+Transmission mode: Burst (all 5 params sent together)

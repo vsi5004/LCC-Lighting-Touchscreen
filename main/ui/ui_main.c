@@ -54,17 +54,17 @@ void ui_create_main_screen(void)
     lv_obj_set_style_bg_opa(tab_btns, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(tab_btns, lv_color_make(255, 255, 255), LV_PART_ITEMS | LV_STATE_CHECKED);  // Bright white
 
-    // Add tabs
-    s_tab_manual = lv_tabview_add_tab(s_tabview, "Manual Control");
+    // Add tabs - Scene Selector first (FR-010)
     s_tab_scenes = lv_tabview_add_tab(s_tabview, "Scene Selector");
+    s_tab_manual = lv_tabview_add_tab(s_tabview, "Manual Control");
 
     // Set tab styles - light gray background
-    lv_obj_set_style_bg_color(s_tab_manual, lv_color_make(245, 245, 245), LV_PART_MAIN);  // #F5F5F5
-    lv_obj_set_style_bg_color(s_tab_scenes, lv_color_make(245, 245, 245), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_tab_scenes, lv_color_make(245, 245, 245), LV_PART_MAIN);  // #F5F5F5
+    lv_obj_set_style_bg_color(s_tab_manual, lv_color_make(245, 245, 245), LV_PART_MAIN);
 
     // Create content for each tab
-    ui_create_manual_tab(s_tab_manual);
     ui_create_scenes_tab(s_tab_scenes);
+    ui_create_manual_tab(s_tab_manual);
 
     ESP_LOGI(TAG, "Main screen created");
 

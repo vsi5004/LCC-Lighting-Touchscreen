@@ -11,6 +11,7 @@
 
 #include "ui_common.h"
 #include "../app/scene_storage.h"
+#include "../app/fade_controller.h"
 #include "esp_log.h"
 #include <stdio.h>
 #include <string.h>
@@ -18,21 +19,25 @@
 static const char *TAG = "ui_scenes";
 
 // Card dimensions
-#define CARD_WIDTH      280
-#define CARD_HEIGHT     280
+#define CARD_WIDTH      240
+#define CARD_HEIGHT     260
 #define CARD_GAP        20
-#define CAROUSEL_HEIGHT 300
+#define CAROUSEL_HEIGHT 260
 
 // Scene selector state
 static struct {
     int current_scene_index;
     uint16_t transition_duration_sec;
     bool transition_in_progress;
+    bool fade_started;            // True once we've seen FADE_STATE_FADING
+    bool pending_progress_start;  // Request from external task to start progress tracking
     char pending_delete_name[32];  // Scene name pending deletion
 } s_scenes_state = {
     .current_scene_index = 0,
     .transition_duration_sec = 10,
     .transition_in_progress = false,
+    .fade_started = false,
+    .pending_progress_start = false,
     .pending_delete_name = ""
 };
 
@@ -50,6 +55,9 @@ static lv_obj_t *s_label_duration = NULL;
 static lv_obj_t *s_btn_apply = NULL;
 static lv_obj_t *s_progress_bar = NULL;
 static lv_obj_t *s_label_no_scenes = NULL;
+
+// Progress bar update timer
+static lv_timer_t *s_progress_timer = NULL;
 
 // Delete confirmation modal
 static lv_obj_t *s_delete_modal = NULL;
@@ -80,11 +88,11 @@ static void update_card_selection(int selected_index)
  */
 static void update_duration_label(uint16_t seconds)
 {
-    char buf[32];
+    char buf[42];
     if (seconds < 60) {
-        snprintf(buf, sizeof(buf), "Duration: %d sec", seconds);
+        snprintf(buf, sizeof(buf), "Transition Duration: %d sec", seconds);
     } else {
-        snprintf(buf, sizeof(buf), "Duration: %d min %d sec", seconds / 60, seconds % 60);
+        snprintf(buf, sizeof(buf), "Transition Duration: %d min %d sec", seconds / 60, seconds % 60);
     }
     lv_label_set_text(s_label_duration, buf);
 }
@@ -101,6 +109,81 @@ static void duration_slider_event_cb(lv_event_t *e)
 }
 
 /**
+ * @brief Progress bar update timer callback (FR-043)
+ * 
+ * Called periodically to update the progress bar during fades.
+ * Also handles pending progress start requests from external tasks.
+ */
+static void progress_timer_cb(lv_timer_t *timer)
+{
+    // Check for pending progress start request from external task
+    if (s_scenes_state.pending_progress_start) {
+        s_scenes_state.pending_progress_start = false;
+        s_scenes_state.transition_in_progress = true;
+        s_scenes_state.fade_started = false;
+        if (s_progress_bar) {
+            lv_obj_clear_flag(s_progress_bar, LV_OBJ_FLAG_HIDDEN);
+            lv_bar_set_value(s_progress_bar, 0, LV_ANIM_OFF);
+        }
+        ESP_LOGI(TAG, "Progress tracking started from pending request");
+    }
+    
+    // If we're not tracking a transition, nothing to do
+    if (!s_scenes_state.transition_in_progress) {
+        return;
+    }
+    
+    fade_progress_t progress;
+    fade_state_t state = fade_controller_get_progress(&progress);
+    
+    if (state == FADE_STATE_FADING) {
+        // Mark that we've seen the fade actually start
+        s_scenes_state.fade_started = true;
+        // Update progress bar value (0-100)
+        if (s_progress_bar) {
+            lv_bar_set_value(s_progress_bar, progress.progress_percent, LV_ANIM_OFF);
+        }
+    } else if (s_scenes_state.fade_started) {
+        // Only hide if we previously saw FADING state (now IDLE or COMPLETE)
+        if (s_progress_bar) {
+            lv_bar_set_value(s_progress_bar, 100, LV_ANIM_OFF);
+            lv_obj_add_flag(s_progress_bar, LV_OBJ_FLAG_HIDDEN);
+        }
+        s_scenes_state.transition_in_progress = false;
+        s_scenes_state.fade_started = false;
+        
+        ESP_LOGI(TAG, "Fade complete, progress bar hidden");
+    }
+}
+
+/**
+ * @brief Start progress bar updates (called from within LVGL context)
+ */
+static void start_progress_updates(void)
+{
+    // Show the progress bar and reset value
+    if (s_progress_bar) {
+        lv_obj_clear_flag(s_progress_bar, LV_OBJ_FLAG_HIDDEN);
+        lv_bar_set_value(s_progress_bar, 0, LV_ANIM_OFF);
+    }
+    s_scenes_state.transition_in_progress = true;
+    s_scenes_state.fade_started = false;  // Will be set true when we see FADING
+}
+
+/**
+ * @brief Start the progress bar tracking for a fade in progress (public API)
+ * 
+ * This is called from main.c (outside LVGL task context), so we just set
+ * a pending flag that the progress timer will pick up on its next tick.
+ */
+void ui_scenes_start_progress_tracking(void)
+{
+    // Set pending flag - the persistent timer will pick this up
+    s_scenes_state.pending_progress_start = true;
+    ESP_LOGI(TAG, "Progress tracking requested (pending)");
+}
+
+/**
  * @brief Apply button event handler (FR-042)
  */
 static void apply_btn_event_cb(lv_event_t *e)
@@ -112,11 +195,33 @@ static void apply_btn_event_cb(lv_event_t *e)
         ESP_LOGI(TAG, "Applying scene '%s': B=%d R=%d G=%d B=%d W=%d, Duration=%d sec",
                  scene->name, scene->brightness, scene->red, scene->green,
                  scene->blue, scene->white, s_scenes_state.transition_duration_sec);
+        
+        // Start fade to target scene
+        fade_params_t params = {
+            .target = {
+                .brightness = scene->brightness,
+                .red = scene->red,
+                .green = scene->green,
+                .blue = scene->blue,
+                .white = scene->white
+            },
+            .duration_ms = (uint32_t)s_scenes_state.transition_duration_sec * 1000
+        };
+        
+        esp_err_t ret = fade_controller_start(&params);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to start fade: %s", esp_err_to_name(ret));
+        } else {
+            // Show progress bar and start updates (FR-043)
+            // Only show progress bar if duration > 0
+            if (s_scenes_state.transition_duration_sec > 0) {
+                s_scenes_state.transition_in_progress = true;
+                start_progress_updates();
+            }
+        }
+    } else {
+        ESP_LOGW(TAG, "No scene selected");
     }
-    
-    // TODO: Perform linear fade to target scene (FR-042)
-    // This will call into the lighting_task to start the fade
-    // The progress bar should be updated by a callback (FR-043)
 }
 
 /**
@@ -326,7 +431,7 @@ static lv_obj_t* create_scene_card(lv_obj_t *parent, const ui_scene_t *scene, in
     
     // Delete button (top-right corner)
     lv_obj_t *btn_delete = lv_btn_create(card);
-    lv_obj_set_size(btn_delete, 45, 45);
+    lv_obj_set_size(btn_delete, 36, 36);
     lv_obj_align(btn_delete, LV_ALIGN_TOP_RIGHT, 5, -5);
     lv_obj_set_style_bg_color(btn_delete, lv_color_make(244, 67, 54), LV_PART_MAIN);  // Material Red
     lv_obj_set_style_radius(btn_delete, LV_RADIUS_CIRCLE, LV_PART_MAIN);
@@ -337,31 +442,41 @@ static lv_obj_t* create_scene_card(lv_obj_t *parent, const ui_scene_t *scene, in
     
     lv_obj_t *trash_icon = lv_label_create(btn_delete);
     lv_label_set_text(trash_icon, LV_SYMBOL_TRASH);
-    lv_obj_set_style_text_font(trash_icon, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(trash_icon, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(trash_icon, lv_color_make(255, 255, 255), LV_PART_MAIN);
     lv_obj_center(trash_icon);
     
-    // Scene name (large, centered)
+    // Color preview circle (shows approximate light color)
+    lv_obj_t *color_circle = lv_obj_create(card);
+    lv_obj_set_size(color_circle, 80, 80);
+    lv_obj_align(color_circle, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_set_style_radius(color_circle, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_color_t preview_color = ui_calculate_preview_color(
+        scene->brightness, scene->red, scene->green, scene->blue, scene->white);
+    lv_obj_set_style_bg_color(color_circle, preview_color, LV_PART_MAIN);
+    lv_obj_clear_flag(color_circle, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    
+    // Scene name (below color circle)
     lv_obj_t *name_label = lv_label_create(card);
     lv_label_set_text(name_label, scene->name);
-    lv_obj_set_style_text_font(name_label, &lv_font_montserrat_32, LV_PART_MAIN);
+    lv_obj_set_style_text_font(name_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(name_label, lv_color_make(33, 33, 33), LV_PART_MAIN);
     lv_obj_set_style_text_align(name_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_width(name_label, CARD_WIDTH - 60);
+    lv_obj_set_width(name_label, CARD_WIDTH - 50);
     lv_label_set_long_mode(name_label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(name_label, LV_ALIGN_TOP_MID, 0, 50);
+    lv_obj_align(name_label, LV_ALIGN_TOP_MID, 0, 140);
     
     // RGBW values (smaller font)
     char values_buf[80];
-    snprintf(values_buf, sizeof(values_buf), "Brightness: %d\nR:%d  G:%d  B:%d  W:%d",
+    snprintf(values_buf, sizeof(values_buf), "Brightness:%d\nR:%d G:%d B:%d W:%d",
              scene->brightness, scene->red, scene->green, scene->blue, scene->white);
     
     lv_obj_t *values_label = lv_label_create(card);
     lv_label_set_text(values_label, values_buf);
-    lv_obj_set_style_text_font(values_label, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_font(values_label, &lv_font_montserrat_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(values_label, lv_color_make(117, 117, 117), LV_PART_MAIN);
     lv_obj_set_style_text_align(values_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(values_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(values_label, LV_ALIGN_BOTTOM_MID, 0, -5);
     
     return card;
 }
@@ -379,7 +494,7 @@ void ui_create_scenes_tab(lv_obj_t *parent)
     // Create horizontal scrolling carousel container (FR-040)
     s_carousel = lv_obj_create(parent);
     lv_obj_set_size(s_carousel, 760, CAROUSEL_HEIGHT);
-    lv_obj_align(s_carousel, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(s_carousel, LV_ALIGN_TOP_MID, 0, 5);
     lv_obj_set_style_bg_opa(s_carousel, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_carousel, 0, LV_PART_MAIN);
     // Use left/right padding to center first/last cards and constrain scroll
@@ -409,17 +524,18 @@ void ui_create_scenes_tab(lv_obj_t *parent)
     lv_obj_set_style_text_align(s_label_no_scenes, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 
     // Create transition duration slider (FR-041)
+    // Position below carousel with proper spacing
     s_label_duration = lv_label_create(parent);
     update_duration_label(s_scenes_state.transition_duration_sec);
-    lv_obj_set_style_text_font(s_label_duration, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_label_duration, lv_color_hex(0x0000), LV_PART_MAIN);
-    lv_obj_align(s_label_duration, LV_ALIGN_BOTTOM_LEFT, 20, -100);
+    lv_obj_set_style_text_font(s_label_duration, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_label_duration, lv_color_hex(0x333333), LV_PART_MAIN);
+    lv_obj_align(s_label_duration, LV_ALIGN_BOTTOM_LEFT, 20, -70);
     
     s_slider_duration = lv_slider_create(parent);
     lv_slider_set_range(s_slider_duration, 0, 300);  // 0 to 300 seconds (FR-041)
     lv_slider_set_value(s_slider_duration, s_scenes_state.transition_duration_sec, LV_ANIM_OFF);
-    lv_obj_set_size(s_slider_duration, 350, 25);
-    lv_obj_align(s_slider_duration, LV_ALIGN_BOTTOM_LEFT, 20, -60);
+    lv_obj_set_size(s_slider_duration, 350, 20);
+    lv_obj_align(s_slider_duration, LV_ALIGN_BOTTOM_LEFT, 20, -25);
     lv_obj_add_event_cb(s_slider_duration, duration_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     
     // Style the duration slider - Material Blue
@@ -428,24 +544,26 @@ void ui_create_scenes_tab(lv_obj_t *parent)
     lv_obj_set_style_bg_color(s_slider_duration, lv_color_make(33, 150, 243), LV_PART_KNOB);
     lv_obj_set_style_border_width(s_slider_duration, 0, LV_PART_MAIN);
 
-    // Create progress bar (FR-043)
+    // Create progress bar (FR-043) - positioned between carousel and apply button
     s_progress_bar = lv_bar_create(parent);
-    lv_obj_set_size(s_progress_bar, 350, 25);
-    lv_obj_align(s_progress_bar, LV_ALIGN_BOTTOM_RIGHT, -20, -100);
+    lv_obj_set_size(s_progress_bar, 350, 15);
+    lv_obj_align(s_progress_bar, LV_ALIGN_BOTTOM_RIGHT, -20, -85);
     lv_bar_set_value(s_progress_bar, 0, LV_ANIM_OFF);
     
     // Style the progress bar - Material Green
     lv_obj_set_style_bg_color(s_progress_bar, lv_color_make(189, 189, 189), LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_progress_bar, lv_color_make(76, 175, 80), LV_PART_INDICATOR);
     lv_obj_set_style_border_width(s_progress_bar, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_progress_bar, 8, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_progress_bar, 8, LV_PART_INDICATOR);
     
     // Initially hide progress bar
     lv_obj_add_flag(s_progress_bar, LV_OBJ_FLAG_HIDDEN);
 
-    // Create Apply button (FR-042)
+    // Create Apply button (FR-042) - at bottom right
     s_btn_apply = lv_btn_create(parent);
-    lv_obj_set_size(s_btn_apply, 350, 55);
-    lv_obj_align(s_btn_apply, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
+    lv_obj_set_size(s_btn_apply, 350, 70);
+    lv_obj_align(s_btn_apply, LV_ALIGN_BOTTOM_RIGHT, -20, -5);
     lv_obj_add_event_cb(s_btn_apply, apply_btn_event_cb, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *label_apply = lv_label_create(s_btn_apply);
@@ -460,6 +578,10 @@ void ui_create_scenes_tab(lv_obj_t *parent)
     lv_obj_set_style_shadow_width(s_btn_apply, 4, LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(s_btn_apply, LV_OPA_30, LV_PART_MAIN);
     lv_obj_set_style_radius(s_btn_apply, 8, LV_PART_MAIN);
+
+    // Create persistent timer for progress bar updates (runs every 100ms)
+    // This timer handles both internal and external fade tracking
+    s_progress_timer = lv_timer_create(progress_timer_cb, 100, NULL);
 
     ESP_LOGI(TAG, "Scene selector tab created");
 }

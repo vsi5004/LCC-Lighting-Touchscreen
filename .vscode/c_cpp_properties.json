@@ -2,21 +2,24 @@
   "configurations": [
     {
       "name": "ESP-IDF",
-      "compilerPath": "C:\\Users\\isirc\\.espressif\\tools\\riscv32-esp-elf\\esp-13.2.0_20240530\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
+      "compilerPath": "C:\\Users\\isirc\\.espressif\\tools\\xtensa-esp32s3-elf\\esp-12.2.0_20230208\\xtensa-esp32s3-elf\\bin\\xtensa-esp32s3-elf-gcc.exe",
       "compileCommands": "${workspaceFolder}/build/compile_commands.json",
       "includePath": [
-        "${workspaceFolder}/**"
+        "${workspaceFolder}/**",
+        "${workspaceFolder}/components/OpenMRN/src",
+        "${workspaceFolder}/components/OpenMRN/include/esp-idf"
       ],
       "browse": {
         "path": [
           "${workspaceFolder}",
-          "${workspaceFolder}/build"
+          "${workspaceFolder}/build",
+          "${workspaceFolder}/components/OpenMRN/src"
         ],
         "limitSymbolsToIncludedHeaders": false
       },
       "cStandard": "c11",
-      "cppStandard": "c++17",
-      "intelliSenseMode": "linux-gcc-x64"
+      "cppStandard": "c++14",
+      "intelliSenseMode": "gcc-x64"
     }
   ],
   "version": 4

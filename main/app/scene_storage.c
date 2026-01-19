@@ -342,6 +342,23 @@ size_t scene_storage_get_count(void)
 }
 
 /**
+ * @brief Get the first scene (for auto-apply on boot)
+ */
+esp_err_t scene_storage_get_first(ui_scene_t *scene)
+{
+    if (!scene) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (s_scene_count == 0) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    *scene = s_scenes[0];
+    return ESP_OK;
+}
+
+/**
  * @brief Reload scenes and update UI
  */
 void scene_storage_reload_ui(void)
@@ -354,6 +371,9 @@ void scene_storage_reload_ui(void)
     esp_err_t ret = scene_storage_load(scenes, SCENE_STORAGE_MAX_SCENES, &count);
     ESP_LOGI(TAG, "scene_storage_load returned %s, count=%d", esp_err_to_name(ret), count);
     
+    // Lock LVGL before modifying UI (LVGL is not thread-safe)
+    ui_lock();
+    
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "Calling ui_scenes_load_from_sd with %d scenes", count);
         ui_scenes_load_from_sd(scenes, count);
@@ -362,4 +382,6 @@ void scene_storage_reload_ui(void)
         ESP_LOGW(TAG, "Failed to reload scenes for UI: %s", esp_err_to_name(ret));
         ui_scenes_load_from_sd(NULL, 0);
     }
+    
+    ui_unlock();
 }

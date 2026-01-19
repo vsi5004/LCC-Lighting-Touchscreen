@@ -105,21 +105,48 @@ Where `x` selects the lighting parameter:
 
 ## 4. Configuration Files
 
-### File: `config.json`
+### File: `nodeid.txt` (SD Card)
 
-```json
-{
-  "version": 1,
-  "node_id": "05.01.01.01.22.60",
-  "base_event_id": "05.01.01.01.22.60.00.00"
-}
+Plain text file containing the 6-byte LCC node ID in dotted hex format:
+```
+05.01.01.01.22.60
 ```
 
 Rules:
-- Node ID is a 6-byte LCC node identifier in dotted hex format
-- Base event ID is used to derive lighting parameter events
-- File is read at boot; changes require reboot
-- Missing or invalid config falls back to defaults
+- Read at boot before LCC initialization
+- Missing file causes SD card error screen
+- Changes require device restart
+
+### LCC Configuration (CDI/ACDI)
+
+The device uses OpenMRN's CDI (Configuration Description Information) for:
+- **Base Event ID**: 8-byte event ID prefix stored at CDI offset 132
+- **Startup Behavior**: Auto-apply settings (see below)
+- **User Name/Description**: Stored in ACDI user space (space 251)
+
+**CDI Memory Layout:**
+| Offset | Size | Content |
+|--------|------|---------|
+| 0 | 4 | InternalConfigData (version, etc.) |
+| 4 | 1 | Auto-Apply Enabled (0=disabled, 1=enabled) |
+| 5 | 2 | Auto-Apply Duration (seconds, 0-300) |
+| 7 | ... | Reserved |
+| 132 | 8 | Base Event ID |
+
+**Startup Configuration:**
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| Auto-Apply Enabled | 1 | 0-1 | Apply first scene on boot |
+| Auto-Apply Duration | 10 | 0-300 | Fade duration in seconds |
+
+**SNIP (Simple Node Information Protocol):**
+- Manufacturer: "IvanBuilds"
+- Model: "LCC Touchscreen Controller"
+- Hardware Version: "ESP32S3 LCD 4.3B"
+- Software Version: Read from `SNIP_STATIC_DATA`
+
+**Implementation Note:** User info (name/description) uses `space="251"` (ACDI user
+space) with `origin="1"` to avoid conflicts with manufacturer info at origin 0.
 
 ---
 
@@ -154,16 +181,36 @@ Display splashscreen.jpg from SD at boot using esp_jpeg decoder.
 AC: Displayed within 1500 ms or fallback shown.
 
 #### FR-002
-Initialize OpenMRN using Node ID from SD card config.json.
+Initialize OpenMRN using Node ID from SD card `/sdcard/nodeid.txt`.
 AC: Node visible on LCC network with configured ID.
 
 #### FR-003
 Transition to main UI within 5 s of LCC readiness or timeout.
 
+#### FR-004 (Implemented)
+If SD card is not detected at boot, display error screen with:
+- Warning icon and "SD Card Not Detected" title
+- Instructions listing required files (nodeid.txt, scenes.json)
+- Screen persists until device restart
+
+**Implementation Note:** SD card retry is not performed after error screen is shown
+because `waveshare_sd_init()` reinitializes CH422G and SPI, which interferes with
+the RGB LCD display operation. User must insert card and restart device.
+
+#### FR-005 (Implemented)
+Auto-apply first scene on boot when enabled via LCC configuration:
+- Configurable enable/disable (default: enabled)
+- Configurable fade duration (default: 10 seconds, range 0-300)
+- Assumes initial lighting state is all zeros (lights off)
+- Progress bar shows fade progress on Scene Selector tab
+
+AC: First scene fades in over configured duration after UI loads.
+
 ### Main UI
 
 #### FR-010
-Provide two tabs: Manual Control and Scene Selector.
+Provide two tabs: Scene Selector (left) and Manual Control (right).
+Scene Selector is the default tab shown on startup.
 
 ### Manual Control
 
@@ -179,11 +226,21 @@ Apply transmits all parameters respecting rate limits.
 #### FR-023
 Save Scene opens modal dialog with Save and Cancel.
 
+#### FR-024 (Implemented)
+Display color preview circle showing approximate light output from current RGBW + brightness settings.
+- Circle updates in real-time as sliders are adjusted
+- Uses additive light mixing algorithm
+- White channel blends towards white while preserving hue
+- Brightness acts as intensity using gamma curve
+
+AC: Circle color reflects approximate visual output of RGBW combination.
+
 ### Scene Selector
 
 #### FR-040
 Display horizontal swipeable card carousel loaded from SD.
-- Cards are 280×280 pixels with 20px gap
+- Cards are 240×260 pixels with 20px gap
+- Each card shows color preview circle, scene name, and RGBW values
 - Carousel uses center snap scrolling
 - Selected card shows blue border highlight
 - Each card has delete button (top-right) with confirmation modal

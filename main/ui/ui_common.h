@@ -105,6 +105,23 @@ void ui_manual_get_values(uint8_t *brightness, uint8_t *red, uint8_t *green,
 void ui_manual_set_values(uint8_t brightness, uint8_t red, uint8_t green, 
                           uint8_t blue, uint8_t white);
 
+/**
+ * @brief Calculate display RGB from RGBW + brightness (additive light mixing)
+ * 
+ * For RGBW LEDs:
+ * - RGB channels mix additively (R+G=Yellow, R+B=Magenta, G+B=Cyan)
+ * - White LED adds equally to all RGB channels
+ * - Brightness is a master dimmer applied to all
+ * 
+ * @param brightness Master brightness (0-255)
+ * @param r Red channel (0-255)
+ * @param g Green channel (0-255)
+ * @param b Blue channel (0-255)
+ * @param w White channel (0-255)
+ * @return lv_color_t Display color for preview
+ */
+lv_color_t ui_calculate_preview_color(uint8_t brightness, uint8_t r, uint8_t g, uint8_t b, uint8_t w);
+
 // ----- Scene Selector Tab Functions -----
 
 /**
@@ -126,6 +143,14 @@ void ui_scenes_load_from_sd(const ui_scene_t *scenes, size_t count);
  * @param percent Progress percentage (0-100)
  */
 void ui_scenes_update_progress(uint8_t percent);
+
+/**
+ * @brief Start the progress bar tracking for a fade in progress
+ * 
+ * Shows the progress bar and starts a timer to update it
+ * based on the fade controller's progress.
+ */
+void ui_scenes_start_progress_tracking(void);
 
 /**
  * @brief Get current selected scene index

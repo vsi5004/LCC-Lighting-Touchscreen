@@ -11,6 +11,7 @@
 
 #include "ui_common.h"
 #include "../app/scene_storage.h"
+#include "../app/fade_controller.h"
 #include "esp_log.h"
 #include <stdio.h>
 
@@ -46,6 +47,7 @@ static lv_obj_t *s_label_white = NULL;
 
 static lv_obj_t *s_btn_update = NULL;
 static lv_obj_t *s_btn_save_scene = NULL;
+static lv_obj_t *s_color_preview = NULL;
 
 // Save Scene modal objects
 static lv_obj_t *s_save_modal = NULL;
@@ -236,6 +238,72 @@ static void show_save_scene_modal(void)
 }
 
 /**
+ * @brief Calculate display RGB from RGBW + brightness (additive light mixing)
+ * 
+ * For RGBW LEDs:
+ * - RGB channels define the hue/color
+ * - White LED blends towards white, but doesn't completely wash out color
+ * - Brightness acts as intensity using gamma curve for perceptual accuracy
+ * 
+ * @param brightness Master brightness (0-255)
+ * @param r Red channel (0-255)
+ * @param g Green channel (0-255)
+ * @param b Blue channel (0-255)
+ * @param w White channel (0-255)
+ * @return lv_color_t Display color for preview
+ */
+lv_color_t ui_calculate_preview_color(uint8_t brightness, uint8_t r, uint8_t g, uint8_t b, uint8_t w)
+{
+    // White LED blends color towards white, but preserves some hue
+    // This keeps color visible even at high white values
+    // blend_factor = w / 320 means max 80% blend towards white at w=255
+    // For each channel: result = color + (255 - color) * blend_factor
+    uint16_t full_r = r + ((255 - r) * w) / 320;
+    uint16_t full_g = g + ((255 - g) * w) / 320;
+    uint16_t full_b = b + ((255 - b) * w) / 320;
+    
+    // Clamp to 255 (shouldn't be needed with /512 but for safety)
+    if (full_r > 255) full_r = 255;
+    if (full_g > 255) full_g = 255;
+    if (full_b > 255) full_b = 255;
+    
+    // Apply brightness as intensity using square root for perceptual linearity
+    // This keeps colors visible at lower brightness (like alpha/opacity)
+    // brightness=0 -> 0%, brightness=64 -> 50%, brightness=255 -> 100%
+    uint32_t b_normalized = (brightness * 255);  // 0-65025
+    uint32_t intensity = 0;
+    if (b_normalized > 0) {
+        // Integer square root using Newton-Raphson
+        uint32_t x = b_normalized;
+        uint32_t y = x;
+        while (y > (x / y)) {
+            y = (y + x / y) / 2;
+        }
+        intensity = y;
+    }
+    // intensity is now 0-255 with gamma 0.5 curve applied
+    
+    uint16_t final_r = (full_r * intensity) / 255;
+    uint16_t final_g = (full_g * intensity) / 255;
+    uint16_t final_b = (full_b * intensity) / 255;
+    
+    return lv_color_make((uint8_t)final_r, (uint8_t)final_g, (uint8_t)final_b);
+}
+
+/**
+ * @brief Update the color preview circle
+ */
+static void update_color_preview(void)
+{
+    if (s_color_preview) {
+        lv_color_t color = ui_calculate_preview_color(
+            s_manual_state.brightness, s_manual_state.red,
+            s_manual_state.green, s_manual_state.blue, s_manual_state.white);
+        lv_obj_set_style_bg_color(s_color_preview, color, LV_PART_MAIN);
+    }
+}
+
+/**
  * @brief Update label text with current value
  */
 static void update_slider_label(lv_obj_t *label, const char *name, uint8_t value)
@@ -270,6 +338,9 @@ static void slider_event_cb(lv_event_t *e)
         s_manual_state.white = (uint8_t)value;
         update_slider_label(s_label_white, "White", s_manual_state.white);
     }
+    
+    // Update color preview circle
+    update_color_preview();
 }
 
 /**
@@ -282,8 +353,19 @@ static void apply_btn_event_cb(lv_event_t *e)
              s_manual_state.brightness, s_manual_state.red, s_manual_state.green,
              s_manual_state.blue, s_manual_state.white);
     
-    // TODO: Transmit all parameters respecting rate limits (FR-022)
-    // This will call into the lighting_task module to send LCC events
+    // Apply immediately (no fade from manual control)
+    lighting_state_t state = {
+        .brightness = s_manual_state.brightness,
+        .red = s_manual_state.red,
+        .green = s_manual_state.green,
+        .blue = s_manual_state.blue,
+        .white = s_manual_state.white
+    };
+    
+    esp_err_t ret = fade_controller_apply_immediate(&state);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to apply lighting: %s", esp_err_to_name(ret));
+    }
 }
 
 /**
@@ -352,11 +434,21 @@ void ui_create_manual_tab(lv_obj_t *parent)
     s_slider_white = create_labeled_slider(parent, "White", s_manual_state.white, 
                                             &s_label_white, 305);
 
-    // Create buttons on right third, stacked vertically
+    // Create color preview circle on right side
+    s_color_preview = lv_obj_create(parent);
+    lv_obj_set_size(s_color_preview, 140, 140);
+    lv_obj_align(s_color_preview, LV_ALIGN_TOP_RIGHT, -60, 20);
+    lv_obj_set_style_radius(s_color_preview, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_clear_flag(s_color_preview, LV_OBJ_FLAG_SCROLLABLE);
+    
+    // Set initial preview color
+    update_color_preview();
+
+    // Create buttons on right third, below color preview
     // Apply button (FR-021, FR-022)
     s_btn_update = lv_btn_create(parent);
     lv_obj_set_size(s_btn_update, 220, 60);
-    lv_obj_align(s_btn_update, LV_ALIGN_TOP_RIGHT, -20, 80);
+    lv_obj_align(s_btn_update, LV_ALIGN_TOP_RIGHT, -20, 200);
     lv_obj_add_event_cb(s_btn_update, apply_btn_event_cb, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *label_apply = lv_label_create(s_btn_update);
@@ -374,7 +466,7 @@ void ui_create_manual_tab(lv_obj_t *parent)
     // Save Scene button (FR-023) - below Apply button
     s_btn_save_scene = lv_btn_create(parent);
     lv_obj_set_size(s_btn_save_scene, 220, 60);
-    lv_obj_align(s_btn_save_scene, LV_ALIGN_TOP_RIGHT, -20, 160);
+    lv_obj_align(s_btn_save_scene, LV_ALIGN_TOP_RIGHT, -20, 280);
     lv_obj_add_event_cb(s_btn_save_scene, save_scene_btn_event_cb, LV_EVENT_CLICKED, NULL);
     
     lv_obj_t *label_save = lv_label_create(s_btn_save_scene);
@@ -439,6 +531,9 @@ void ui_manual_set_values(uint8_t brightness, uint8_t red, uint8_t green,
         lv_slider_set_value(s_slider_white, white, LV_ANIM_OFF);
         update_slider_label(s_label_white, "White", white);
     }
+    
+    // Update color preview circle
+    update_color_preview();
 
     ui_unlock();
 }

@@ -67,6 +67,14 @@ esp_err_t scene_storage_delete(const char *name);
 size_t scene_storage_get_count(void);
 
 /**
+ * @brief Get the first scene (for auto-apply on boot)
+ * 
+ * @param scene Output: the first scene
+ * @return esp_err_t ESP_OK on success, ESP_ERR_NOT_FOUND if no scenes
+ */
+esp_err_t scene_storage_get_first(ui_scene_t *scene);
+
+/**
  * @brief Reload scenes and update UI
  * 
  * Convenience function to reload scenes from SD and update the scene list UI

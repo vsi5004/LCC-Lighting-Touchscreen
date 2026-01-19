@@ -1,15 +1,46 @@
 # Agent Operating Rules
 
+## Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Board Drivers | ✓ Complete | CH422G, LCD, Touch, SD all working |
+| LCC/OpenMRN | ✓ Complete | Node init, TWAI, event production, CDI/ACDI |
+| LVGL UI | ✓ Complete | Scene Selector (left) + Manual Control tabs |
+| Scene Manager | ✓ Complete | JSON parse, auto-create default scenes |
+| Fade Controller | ✓ Complete | State machine, interpolation, rate limiting |
+| SD Error Screen | ✓ Complete | Displays when SD card missing |
+| Progress Bar | ✓ Complete | LVGL timer updates, auto-hides on completion |
+| Auto-Apply | ✓ Complete | Applies first scene on boot with configurable duration |
+| Color Preview | ✓ Complete | RGBW light mixing preview circles on cards and manual tab |
+
+### Recent Changes (Session 2026-01-18)
+- Fixed SNIP user info display (CDI space 251 with origin 1)
+- Fixed Base Event ID CDI offset (changed from 128 to 132)
+- Implemented fade_controller with linear interpolation
+- Wired UI Apply buttons to fade_controller
+- Added progress bar updates via LVGL timer
+- Added SD card error screen (persists until restart)
+- Updated branding: IvanBuilds / LCC Touchscreen Controller
+- Swapped tab order: Scene Selector now first (leftmost)
+- Improved Scene Selector layout (smaller cards, proper spacing)
+- Fixed progress bar to hide when fade reaches 100%
+- Added auto-apply first scene on boot (LCC configurable)
+- Added color preview circles to Manual Control tab and scene cards
+- Fixed fade controller completion bug (next_param_index stuck at end)
+- Fixed progress bar not hiding on first auto-apply (added fade_started flag)
+
+---
+
 ## Component Ownership
 
 | Component | Files | Scope |
 |-----------|-------|-------|
-| Board Drivers | `components/board_drivers/*` | CH422G, LCD, Touch, SD, Backlight |
+| Board Drivers | `components/board_drivers/*` | CH422G, LCD, Touch, SD |
 | LCC/OpenMRN | `main/app/lcc_node.*` | Node init, event production, TWAI |
 | LVGL UI | `main/ui/*` | Screens, widgets, touch handling |
 | Scene Manager | `main/app/scene_manager.*` | JSON parse/save, atomic writes |
 | Fade Controller | `main/app/fade_controller.*` | Rate limiting, interpolation |
-| Lighting Task | `main/app/lighting_task.*` | State machine, command dispatch |
 
 ---
 

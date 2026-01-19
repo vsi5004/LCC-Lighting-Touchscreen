@@ -2,6 +2,8 @@ idf_component_register(
     SRCS 
         "main.c"
         "app/scene_storage.c"
+        "app/lcc_node.cpp"
+        "app/fade_controller.c"
         "ui/ui_common.c"
         "ui/ui_main.c"
         "ui/ui_manual.c"
@@ -20,5 +22,11 @@ idf_component_register(
         espressif__esp_jpeg
         lvgl__lvgl
         json
-        # OpenMRN  # Temporarily disabled for testing
+        OpenMRN
+)
+
+# Set C++ standard for OpenMRN compatibility
+set_source_files_properties(
+    "app/lcc_node.cpp"
+    PROPERTIES COMPILE_FLAGS "-std=gnu++14 -fno-strict-aliasing"
 )

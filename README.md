@@ -124,20 +124,20 @@ This project is configured for the [ESP-IDF VS Code Extension](https://marketpla
 
 The device reads configuration and scenes from the SD card root:
 
-### `config.json`
+### `nodeid.txt`
 
-```json
-{
-  "version": 1,
-  "node_id": "05.01.01.01.22.60",
-  "base_event_id": "05.01.01.01.22.60.00.00"
-}
+Plain text file containing the 6-byte LCC node ID in dotted hex format:
+
+```
+05.01.01.01.22.60
 ```
 
-| Field | Description |
-|-------|-------------|
-| `node_id` | 6-byte LCC node ID in dotted hex |
-| `base_event_id` | Base for lighting event IDs |
+### `openmrn_config`
+
+Automatically created by OpenMRN. Stores LCC configuration including:
+- Base Event ID (configurable via LCC tools like JMRI)
+- Auto-apply settings (enable/disable, transition duration)
+- User-editable node name and description
 
 ### `scenes.json`
 
@@ -181,22 +181,54 @@ Events are transmitted to control downstream RGBW lighting nodes.
 - Transmission order: Brightness → R → G → B → W
 - All 5 parameters sent on Apply
 
+## LCC Configuration
+
+The following settings can be configured via any LCC configuration tool (JMRI, etc.):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Base Event ID | 05.01.01.01.22.60.00.00 | Base for lighting event IDs |
+| Auto-Apply on Boot | Enabled (1) | Apply first scene after startup |
+| Auto-Apply Duration | 10 seconds | Fade duration for auto-apply (0-300s) |
+| User Name | (editable) | Node name shown in LCC tools |
+| User Description | (editable) | Node description shown in LCC tools |
+
 ## User Interface
+
+### Scene Selector Tab (Default)
+
+- Horizontal swipeable card carousel (240×260px cards)
+- **Color preview circle** on each card showing approximate light output
+- Center-snapping scroll behavior with blue selection highlight
+- Transition duration slider (0–300 seconds)
+- **Apply** performs smooth linear fade to selected scene
+- Progress bar shows fade completion (auto-hides when done)
+- Delete button on each card (with confirmation modal)
 
 ### Manual Control Tab
 
 - Five sliders: Brightness, Red, Green, Blue, White
-- **Apply** button sends current values to LCC bus
+- **Color preview circle** showing approximate light output from current settings
+- **Apply** button sends current values immediately to LCC bus
 - **Save Scene** opens dialog to save current settings
 
-### Scene Selector Tab
+### Color Preview Algorithm
 
-- Horizontal swipeable card carousel
-- Center-snapping scroll behavior
-- Transition duration slider (0–300 seconds)
-- **Apply** performs smooth linear fade to selected scene
-- Progress bar shows fade completion
-- Delete button on each card (with confirmation)
+The color preview circles approximate the visual output of RGBW LEDs:
+
+- **Additive color mixing**: RGB channels combine as light (R+G=Yellow, etc.)
+- **White channel**: Blends color towards white (max 80% at W=255) while preserving hue
+- **Brightness**: Acts as intensity using gamma 0.5 curve for perceptual accuracy
+
+### Auto-Apply on Boot
+
+When enabled (default), the device automatically applies the first scene in the
+scene list after startup with a configurable fade duration. This allows lights
+to smoothly turn on when the layout powers up.
+
+- Configurable via LCC tools (JMRI, etc.)
+- Default: Enabled with 10-second transition
+- Assumes initial state is all channels at 0 (lights off)
 
 ## Architecture
 
@@ -204,10 +236,10 @@ Events are transmitted to control downstream RGBW lighting nodes.
 
 | Task | Priority | Responsibility |
 |------|----------|----------------|
-| UI Task | 2 | LVGL rendering, touch input |
-| LCC Task | 5 | OpenMRN executor |
-| Lighting Task | 4 | State management, fades, rate limiting |
-| SD Worker | 3 | Scene and config I/O |
+| lvgl_task | 2 | LVGL rendering via `lv_timer_handler()` |
+| openmrn_task | 5 | OpenMRN executor loop |
+| lighting_task | 4 | Fade controller tick (15ms interval) |
+| main_task | 1 | Hardware init, app orchestration |
 
 ### State Flow
 
