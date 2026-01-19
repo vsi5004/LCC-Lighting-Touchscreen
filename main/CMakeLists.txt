@@ -4,6 +4,7 @@ idf_component_register(
         "app/scene_storage.c"
         "app/lcc_node.cpp"
         "app/fade_controller.c"
+        "app/screen_timeout.c"
         "ui/ui_common.c"
         "ui/ui_main.c"
         "ui/ui_manual.c"

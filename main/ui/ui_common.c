@@ -17,6 +17,9 @@
 #include "waveshare_lcd.h"
 #include "waveshare_touch.h"
 
+// App modules
+#include "app/screen_timeout.h"
+
 static const char *TAG = "ui_common";
 
 // LVGL objects
@@ -71,6 +74,9 @@ static void lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
         data->point.x = point_data.x;
         data->point.y = point_data.y;
         data->state = LV_INDEV_STATE_PRESSED;
+        
+        // Notify screen timeout module of touch activity
+        screen_timeout_notify_activity();
     } else {
         data->state = LV_INDEV_STATE_RELEASED;
     }
@@ -176,14 +182,15 @@ esp_err_t ui_init(lv_disp_t **disp, lv_indev_t **touch_indev)
         TAG, "Failed to start LVGL tick timer"
     );
 
-    // Create LVGL task
-    BaseType_t ret = xTaskCreate(
+    // Create LVGL task pinned to CPU1 (CPU0 handles LCD DMA ISRs)
+    BaseType_t ret = xTaskCreatePinnedToCore(
         lvgl_task,
         "lvgl_task",
         UI_LVGL_TASK_STACK_SIZE_KB * 1024,
         NULL,
         UI_LVGL_TASK_PRIORITY,
-        NULL
+        NULL,
+        1  // Pin to CPU1
     );
     ESP_RETURN_ON_FALSE(ret == pdPASS, ESP_FAIL, TAG, "Failed to create LVGL task");
 

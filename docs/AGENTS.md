@@ -13,6 +13,17 @@
 | Progress Bar | ✓ Complete | LVGL timer updates, auto-hides on completion |
 | Auto-Apply | ✓ Complete | Applies first scene on boot with configurable duration |
 | Color Preview | ✓ Complete | RGBW light mixing preview circles on cards and manual tab |
+| Scene Editing | ✓ Complete | Edit modal with name, RGBW, brightness, reorder |
+
+### Recent Changes (Session 2026-01-19)
+- Added scene editing functionality (FR-044 to FR-048)
+- Added edit button (pencil icon) to scene cards
+- Created edit scene modal with name input, RGBW sliders, color preview
+- Added scene reorder functionality (Move Left/Right buttons)
+- Added ordinal position display ("1st", "2nd", etc.) in edit modal
+- Added `scene_storage_update()` and `scene_storage_reorder()` APIs
+- Fixed LVGL mutex deadlock: added `scene_storage_reload_ui_no_lock()` for use from LVGL callbacks
+- Updated documentation (SPEC.md, ARCHITECTURE.md, README.md)
 
 ### Recent Changes (Session 2026-01-18)
 - Fixed SNIP user info display (CDI space 251 with origin 1)
@@ -39,7 +50,7 @@
 | Board Drivers | `components/board_drivers/*` | CH422G, LCD, Touch, SD |
 | LCC/OpenMRN | `main/app/lcc_node.*` | Node init, event production, TWAI |
 | LVGL UI | `main/ui/*` | Screens, widgets, touch handling |
-| Scene Manager | `main/app/scene_manager.*` | JSON parse/save, atomic writes |
+| Scene Storage | `main/app/scene_storage.*` | JSON parse/save, CRUD operations |
 | Fade Controller | `main/app/fade_controller.*` | Rate limiting, interpolation |
 
 ---
@@ -50,7 +61,8 @@
 - Requirement IDs (FR-xxx) referenced in code comments
 - Unit tests added or updated
 - No blocking I/O in UI task
-- LVGL calls protected by mutex
+- LVGL calls protected by mutex when called from non-UI tasks
+- LVGL callbacks must use `_no_lock` variants of functions that modify UI
 - Memory allocations use appropriate heap (PSRAM for large buffers)
 
 ---

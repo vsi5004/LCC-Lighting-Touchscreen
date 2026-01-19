@@ -4,7 +4,7 @@ An ESP32-S3–based LCC/OpenLCB lighting scene controller with a touch LCD user 
 
 
 ![ESP-IDF](https://img.shields.io/badge/ESP--IDF-v5.1.6-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-BSD--2--Clause-green)
 ![Platform](https://img.shields.io/badge/platform-ESP32--S3-orange)
 
 ## Overview
@@ -12,8 +12,9 @@ An ESP32-S3–based LCC/OpenLCB lighting scene controller with a touch LCD user 
 This device connects to an LCC (Layout Command Control) / OpenLCB CAN bus and sends RGBW lighting commands to follower lighting controller boards. It provides an intuitive touch interface for:
 
 - **Manual Control** — Real-time RGBW + brightness adjustment via sliders
-- **Scene Management** — Save, load, and smoothly transition between lighting presets
+- **Scene Management** — Save, load, edit, reorder, and delete lighting presets
 - **Configurable Fades** — Linear transitions up to 5 minutes with visual progress
+- **Power Saving** — Automatic backlight timeout with touch-to-wake
 
 The controller does **not** drive LEDs directly; it acts as a command station sending events to downstream lighting nodes.
 
@@ -42,6 +43,20 @@ The controller does **not** drive LEDs directly; it acts as a command station se
 | I2C SCL | GPIO 9 |
 | SD Card | SPI via CH422G CS |
 
+### 3D Printed Mounts
+
+The `printed_mounts/` directory contains 3D models for mounting the display at an angle
+for convenient viewing on a layout fascia or control panel.
+
+![Angled Mount Render](docs/img/angled_mount_render.png)
+
+**Included Files:**
+- `Waveshare ESP32-S3-Touch_LCD-4.3B Angled Mount v4.f3d` — Fusion 360 source file
+- `Waveshare ESP32-S3-Touch_LCD-4.3B Angled Mount v4.stl` — Print-ready STL
+
+The mount provides an ergonomic viewing angle and can be attached to a fascia or
+mounted on a surface near the layout. The mount allows for rear access to the SD Card even after the screen is affixed with double sided tape. Mounting to the layout can be acheived with a variety of commonly available fasteners as long as the head is smaller than 8.2mm in diameter.
+
 ## Software Stack
 
 | Component | Version/Source |
@@ -57,30 +72,53 @@ The controller does **not** drive LEDs directly; it acts as a command station se
 ```
 LCCLightingTouchscreen/
 ├── CMakeLists.txt              # Top-level build file
-├── sdkconfig.defaults          # ESP-IDF configuration
+├── LICENSE                     # BSD 2-Clause license
+├── lv_conf.h                   # LVGL configuration (root level)
+├── sdkconfig.defaults          # ESP-IDF configuration defaults
+├── sdkconfig                   # Full ESP-IDF configuration
 ├── partitions.csv              # Flash partition table
 ├── components/
 │   ├── OpenMRN/                # LCC/OpenLCB stack (git submodule)
 │   └── board_drivers/          # Hardware abstraction layer
-│       ├── ch422g.c/.h         # I2C expander driver
+│       ├── CMakeLists.txt
+│       ├── ch422g.c            # I2C expander driver
 │       ├── waveshare_lcd.c     # Display initialization
 │       ├── waveshare_touch.c   # Touch input handling
-│       └── waveshare_sd.c      # SD card driver
+│       ├── waveshare_sd.c      # SD card driver
+│       └── include/
+│           ├── ch422g.h
+│           ├── waveshare_lcd.h
+│           ├── waveshare_touch.h
+│           └── waveshare_sd.h
 ├── main/
-│   ├── main.c                  # Entry point
-│   ├── lv_conf.h               # LVGL configuration
+│   ├── CMakeLists.txt
+│   ├── main.c                  # Entry point, task creation
+│   ├── lv_conf.h               # LVGL configuration (main level)
+│   ├── Kconfig.projbuild       # Project-specific Kconfig options
+│   ├── idf_component.yml       # ESP Component Registry dependencies
 │   ├── app/                    # Application logic
-│   │   ├── app_main.c/.h       # App state machine
-│   │   ├── lighting_task.c/.h  # Lighting state & fades
+│   │   ├── app.h               # App-wide includes
+│   │   ├── fade_controller.c/.h # Lighting fade state machine
 │   │   ├── lcc_node.cpp/.h     # OpenMRN integration
-│   │   ├── scene_manager.c/.h  # Scene business logic
-│   │   └── scene_storage.c/.h  # SD card persistence
+│   │   ├── lcc_config.hxx      # CDI configuration definition
+│   │   ├── scene_storage.c/.h  # SD card scene persistence
+│   │   └── screen_timeout.c/.h # Backlight power saving with fade
 │   └── ui/                     # LVGL screens
-│       ├── ui_common.c/.h      # Shared UI utilities
-│       ├── ui_splash.c/.h      # Boot splash screen
-│       ├── ui_manual.c/.h      # Manual RGBW control
-│       └── ui_scenes.c/.h      # Scene card carousel
-└── docs/                       # Design documentation
+│       ├── ui.h                # UI-wide includes
+│       ├── ui_common.c/.h      # LVGL init, mutex, color preview
+│       ├── ui_main.c           # Main tabview screen
+│       ├── ui_manual.c         # Manual RGBW control tab
+│       └── ui_scenes.c         # Scene card carousel tab
+├── docs/                       # Design documentation
+│   ├── ARCHITECTURE.md         # System design, task model
+│   ├── INTERFACES.md           # Hardware interfaces, GPIO mapping
+│   ├── SPEC.md                 # Feature specification
+│   ├── TEST_PLAN.md            # Test cases
+│   ├── AGENTS.md               # AI coding guidelines
+│   └── img/                    # Documentation images
+├── printed_mounts/             # 3D printable enclosure models
+│   ├── *.f3d                   # Fusion 360 source
+│   └── *.stl                   # Slicer-ready STL
 ```
 
 ## Building
@@ -134,10 +172,20 @@ Plain text file containing the 6-byte LCC node ID in dotted hex format:
 
 ### `openmrn_config`
 
-Automatically created by OpenMRN. Stores LCC configuration including:
-- Base Event ID (configurable via LCC tools like JMRI)
-- Auto-apply settings (enable/disable, transition duration)
-- User-editable node name and description
+Binary file automatically created by OpenMRN. Stores LCC configuration data:
+
+**User Info (ACDI)**
+- User Name — Node name shown in LCC tools (e.g., JMRI)
+- User Description — Node description
+
+**Startup Behavior**
+- Auto-Apply First Scene on Boot — Enable (1) or disable (0)
+- Auto-Apply Transition Duration — Fade time in seconds (0-300)
+
+**Lighting Configuration**
+- Base Event ID — 8-byte event ID base for lighting commands
+
+All settings are configurable via any LCC configuration tool (JMRI, etc.).
 
 ### `scenes.json`
 
@@ -177,33 +225,56 @@ Events are transmitted to control downstream RGBW lighting nodes.
 
 ### Transmission Rules
 
-- Minimum interval: **20 ms** between events
+- Minimum interval: **10 ms** between transmission rounds
+- Transmission mode: **Burst** (all 5 params sent together)
 - Transmission order: Brightness → R → G → B → W
 - All 5 parameters sent on Apply
 
-## LCC Configuration
+## LCC Configuration (CDI)
 
 The following settings can be configured via any LCC configuration tool (JMRI, etc.):
 
+### User Info (ACDI)
+| Setting | Description |
+|---------|-------------|
+| User Name | Node name displayed in LCC tools |
+| User Description | Node description displayed in LCC tools |
+
+### Startup Behavior
+| Setting | Default | Range | Description |
+|---------|---------|-------|--------------|
+| Auto-Apply First Scene on Boot | 1 (enabled) | 0-1 | Apply first scene after startup |
+| Auto-Apply Transition Duration | 10 seconds | 0-300s | Fade duration for auto-apply |
+| Screen Backlight Timeout | 60 seconds | 0, 10-3600s | Idle timeout before screen off (0=disabled) |
+
+### Lighting Configuration
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Base Event ID | 05.01.01.01.22.60.00.00 | Base for lighting event IDs |
-| Auto-Apply on Boot | Enabled (1) | Apply first scene after startup |
-| Auto-Apply Duration | 10 seconds | Fade duration for auto-apply (0-300s) |
-| User Name | (editable) | Node name shown in LCC tools |
-| User Description | (editable) | Node description shown in LCC tools |
 
 ## User Interface
 
 ### Scene Selector Tab (Default)
 
-- Horizontal swipeable card carousel (240×260px cards)
-- **Color preview circle** on each card showing approximate light output
+- Horizontal swipeable card carousel
+- Color preview circle on each card showing approximate light output
 - Center-snapping scroll behavior with blue selection highlight
 - Transition duration slider (0–300 seconds)
-- **Apply** performs smooth linear fade to selected scene
+- Apply Button performs smooth linear fade to selected scene
 - Progress bar shows fade completion (auto-hides when done)
+- Edit button on each card opens edit modal
 - Delete button on each card (with confirmation modal)
+
+### Scene Edit Modal
+
+Tap the edit button (✏️) on any scene card to open the edit modal:
+
+- **Scene name** text input with on-screen keyboard
+- **RGBW + Brightness sliders** (0-255 each) with real-time preview
+- **Color preview circle** updates as you adjust values
+- **Move Left/Right buttons** to reorder scenes in the carousel
+- **Preview button** sends current slider values to lighting for live testing
+- **Save** applies changes to SD card, **Cancel** discards
 
 ### Manual Control Tab
 
@@ -230,16 +301,34 @@ to smoothly turn on when the layout powers up.
 - Default: Enabled with 10-second transition
 - Assumes initial state is all channels at 0 (lights off)
 
+### Power Saving (Screen Timeout)
+
+The screen backlight automatically turns off after a configurable idle period to
+save power. Touch the screen to wake it.
+
+- **Configurable timeout**: 0 (disabled), or 10-3600 seconds
+- **Default**: 60 seconds
+- **Smooth transitions**: 1-second fade-to-black before backlight off, fade-in on wake
+- **Touch-to-wake**: Touch during fade or sleep immediately begins wake animation
+- **Note**: The backlight is on/off only (not dimmable) due to CH422G I/O expander
+  hardware limitation. Fade effect is achieved via LVGL overlay animation.
+
+Configuration via LCC tools (JMRI, etc.):
+- Set to 0 to keep screen always on
+- Minimum enabled timeout is 10 seconds
+
 ## Architecture
 
 ### Task Model
 
-| Task | Priority | Responsibility |
-|------|----------|----------------|
-| lvgl_task | 2 | LVGL rendering via `lv_timer_handler()` |
-| openmrn_task | 5 | OpenMRN executor loop |
-| lighting_task | 4 | Fade controller tick (15ms interval) |
-| main_task | 1 | Hardware init, app orchestration |
+| Task | Priority | Core | Responsibility |
+|------|----------|------|--------------|
+| lvgl_task | 2 | CPU1 | LVGL rendering via `lv_timer_handler()` |
+| openmrn_task | 5 | Any | OpenMRN executor loop |
+| lighting_task | 4 | Any | Fade controller tick (10ms interval) |
+| main_task | 1 | CPU1 | Hardware init, app orchestration |
+
+CPU0 is dedicated to RGB LCD DMA interrupt handling for smooth display updates.
 
 ### State Flow
 
@@ -251,7 +340,7 @@ BOOT → SPLASH → LCC_INIT → MAIN_UI
 
 ## License
 
-MIT License — See [LICENSE](LICENSE) for details.
+BSD 2-Clause License — See [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 

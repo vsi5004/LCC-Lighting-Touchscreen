@@ -64,6 +64,9 @@ static bool s_auto_apply_enabled = true;
 /// Cached auto-apply duration in seconds
 static uint16_t s_auto_apply_duration_sec = openlcb::DEFAULT_AUTO_APPLY_DURATION_SEC;
 
+/// Cached screen timeout in seconds
+static uint16_t s_screen_timeout_sec = openlcb::DEFAULT_SCREEN_TIMEOUT_SEC;
+
 /// Config file path
 static std::string s_config_path;
 
@@ -211,10 +214,14 @@ public:
         
         s_auto_apply_duration_sec = s_cfg->seg().startup().auto_apply_duration_sec().read(fd);
         
+        // Read screen timeout configuration
+        s_screen_timeout_sec = s_cfg->seg().startup().screen_timeout_sec().read(fd);
+        
         if (initial_load) {
-            ESP_LOGI(TAG, "Startup config: auto_apply=%s, duration=%u sec",
+            ESP_LOGI(TAG, "Startup config: auto_apply=%s, duration=%u sec, screen_timeout=%u sec",
                      s_auto_apply_enabled ? "enabled" : "disabled",
-                     s_auto_apply_duration_sec);
+                     s_auto_apply_duration_sec,
+                     s_screen_timeout_sec);
         }
         
         // IMPORTANT: Sync config file to SD card after any changes
@@ -239,8 +246,10 @@ public:
         // Set default startup config
         s_cfg->seg().startup().auto_apply_enabled().write(fd, 1);
         s_cfg->seg().startup().auto_apply_duration_sec().write(fd, openlcb::DEFAULT_AUTO_APPLY_DURATION_SEC);
+        s_cfg->seg().startup().screen_timeout_sec().write(fd, openlcb::DEFAULT_SCREEN_TIMEOUT_SEC);
         s_auto_apply_enabled = true;
         s_auto_apply_duration_sec = openlcb::DEFAULT_AUTO_APPLY_DURATION_SEC;
+        s_screen_timeout_sec = openlcb::DEFAULT_SCREEN_TIMEOUT_SEC;
         
         // Set default base event ID
         s_cfg->seg().lighting().base_event_id().write(fd, openlcb::DEFAULT_BASE_EVENT_ID);
@@ -442,6 +451,11 @@ bool lcc_node_get_auto_apply_enabled(void)
 uint16_t lcc_node_get_auto_apply_duration_sec(void)
 {
     return s_auto_apply_duration_sec;
+}
+
+uint16_t lcc_node_get_screen_timeout_sec(void)
+{
+    return s_screen_timeout_sec;
 }
 
 esp_err_t lcc_node_send_lighting_event(uint8_t parameter, uint8_t value)

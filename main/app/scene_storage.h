@@ -81,6 +81,48 @@ esp_err_t scene_storage_get_first(ui_scene_t *scene);
  */
 void scene_storage_reload_ui(void);
 
+/**
+ * @brief Reload scenes and update UI (no mutex - call from LVGL context only)
+ * 
+ * Use this when already running inside an LVGL callback to avoid deadlock.
+ */
+void scene_storage_reload_ui_no_lock(void);
+
+/**
+ * @brief Update an existing scene's properties
+ * 
+ * @param index Scene index (0-based)
+ * @param new_name New scene name (can be same as original)
+ * @param brightness New brightness value (0-255)
+ * @param red New red value (0-255)
+ * @param green New green value (0-255)
+ * @param blue New blue value (0-255)
+ * @param white New white value (0-255)
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_ARG if index invalid,
+ *                   ESP_ERR_INVALID_STATE if name already exists (different scene)
+ */
+esp_err_t scene_storage_update(size_t index, const char *new_name,
+                               uint8_t brightness, uint8_t red, uint8_t green,
+                               uint8_t blue, uint8_t white);
+
+/**
+ * @brief Move a scene to a new position (reorder)
+ * 
+ * @param from_index Current position (0-based)
+ * @param to_index Target position (0-based)
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_ARG if indices invalid
+ */
+esp_err_t scene_storage_reorder(size_t from_index, size_t to_index);
+
+/**
+ * @brief Get a scene by index
+ * 
+ * @param index Scene index (0-based)
+ * @param scene Output: scene data
+ * @return esp_err_t ESP_OK on success, ESP_ERR_INVALID_ARG if index invalid
+ */
+esp_err_t scene_storage_get_by_index(size_t index, ui_scene_t *scene);
+
 #ifdef __cplusplus
 }
 #endif

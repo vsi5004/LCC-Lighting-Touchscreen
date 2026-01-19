@@ -97,6 +97,13 @@ bool lcc_node_get_auto_apply_enabled(void);
 uint16_t lcc_node_get_auto_apply_duration_sec(void);
 
 /**
+ * @brief Get screen backlight timeout in seconds
+ * 
+ * @return Timeout in seconds (0 = disabled, 10-3600 when enabled)
+ */
+uint16_t lcc_node_get_screen_timeout_sec(void);
+
+/**
  * @brief Send a lighting parameter event
  * 
  * Constructs an event ID from base_event_id + parameter offset + value

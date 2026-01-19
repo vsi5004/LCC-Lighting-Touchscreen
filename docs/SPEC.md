@@ -130,7 +130,8 @@ The device uses OpenMRN's CDI (Configuration Description Information) for:
 | 0 | 4 | InternalConfigData (version, etc.) |
 | 4 | 1 | Auto-Apply Enabled (0=disabled, 1=enabled) |
 | 5 | 2 | Auto-Apply Duration (seconds, 0-300) |
-| 7 | ... | Reserved |
+| 7 | 2 | Screen Backlight Timeout (seconds, 0=disabled, 10-3600) |
+| 9 | ... | Reserved |
 | 132 | 8 | Base Event ID |
 
 **Startup Configuration:**
@@ -138,6 +139,7 @@ The device uses OpenMRN's CDI (Configuration Description Information) for:
 |---------|---------|-------|-------------|
 | Auto-Apply Enabled | 1 | 0-1 | Apply first scene on boot |
 | Auto-Apply Duration | 10 | 0-300 | Fade duration in seconds |
+| Screen Timeout | 60 | 0, 10-3600 | Backlight timeout in seconds (0=disabled) |
 
 **SNIP (Simple Node Information Protocol):**
 - Manufacturer: "IvanBuilds"
@@ -206,6 +208,16 @@ Auto-apply first scene on boot when enabled via LCC configuration:
 
 AC: First scene fades in over configured duration after UI loads.
 
+#### FR-006 (Implemented)
+Screen backlight timeout for power saving:
+- Configurable timeout via LCC configuration (default: 60 seconds)
+- Set to 0 to disable timeout (always on)
+- Minimum enabled timeout: 10 seconds, maximum: 3600 seconds
+- Touch-to-wake: Any touch restores backlight immediately
+- Backlight is on/off only (not dimmable - hardware limitation)
+
+AC: Backlight turns off after configured idle period; touch wakes screen.
+
 ### Main UI
 
 #### FR-010
@@ -243,7 +255,7 @@ Display horizontal swipeable card carousel loaded from SD.
 - Each card shows color preview circle, scene name, and RGBW values
 - Carousel uses center snap scrolling
 - Selected card shows blue border highlight
-- Each card has delete button (top-right) with confirmation modal
+- Each card has edit button (top-left) and delete button (top-right) with confirmation modal
 - Padding constrains scroll so first/last cards center properly
 
 #### FR-041
@@ -254,6 +266,46 @@ Apply performs linear fade to target scene.
 
 #### FR-043
 Progress bar reflects transition completion.
+
+### Scene Editing
+
+#### FR-044 (Implemented)
+Each scene card shall have an Edit button that opens an edit modal.
+- Edit button displayed in top-left corner of card (blue circle with pencil icon)
+- Tapping Edit opens modal with current scene values pre-populated
+
+AC: Tapping Edit button shows modal with current scene values.
+
+#### FR-045 (Implemented)
+Edit modal shall allow modifying scene name, brightness, and RGBW values.
+- Text input field for scene name with on-screen keyboard
+- Five sliders for brightness, R, G, B, W (0-255 each)
+- Color preview circle updates in real-time as values change
+
+AC: All fields are editable and changes are reflected in color preview.
+
+#### FR-046 (Implemented)
+Edit modal shall provide Move Left/Right buttons to reorder scenes.
+- Move Left button shifts scene one position earlier in carousel
+- Move Right button shifts scene one position later in carousel
+- Buttons are disabled at respective ends of the scene list
+
+AC: Scene position in carousel changes after reorder operation.
+
+#### FR-047 (Implemented)
+Scene edits shall be validated before saving:
+- Name cannot be empty
+- Name must be unique (except when unchanged)
+
+AC: Save operation fails gracefully if validation fails.
+
+#### FR-048 (Implemented)
+Scene edits shall be written atomically to SD card.
+- Scene storage maintains in-memory cache
+- Full scenes.json file is rewritten on each change
+- File operations are flushed before closing
+
+AC: Power loss during save does not corrupt scenes.json.
 
 ### CAN Rate Limiting
 

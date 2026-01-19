@@ -88,10 +88,25 @@ Write `0x01` to address `0x24` to set output mode.
 | DATA12-15 | 2, 42, 41, 40 |
 
 ### Frame Buffer
-- Location: PSRAM
+- Location: PSRAM (framebuffer), Internal RAM (bounce buffer)
 - Format: RGB565 (16-bit)
 - Size: 800 × 480 × 2 bytes × 2 buffers = 1.5MB
-- Mode: Full-frame double buffering (eliminates horizontal banding during animations)
+- Mode: Double buffering with DMA bounce buffer
+
+### Bounce Buffer Configuration
+The RGB LCD uses a bounce buffer in internal DMA-capable RAM to transfer
+framebuffer data from PSRAM to the display controller:
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| `CONFIG_LCD_RGB_BOUNCE_BUFFER_HEIGHT` | 60 lines | 96KB per buffer, fits in internal RAM |
+| Framebuffer divisor (N) | 8 | 480 ÷ 60 = 8 (must be even integer) |
+
+**Memory Constraints:**
+- Bounce buffer must be in internal DMA-capable RAM (not PSRAM)
+- Available internal RAM: ~250KB
+- 60 lines × 800 pixels × 2 bytes = 96KB per buffer (×2 = 192KB total)
+- 80+ line buffers cause out-of-memory crashes at boot
 
 ---
 

@@ -385,3 +385,193 @@ void scene_storage_reload_ui(void)
     
     ui_unlock();
 }
+
+/**
+ * @brief Reload scenes and update UI (no mutex - call from LVGL context only)
+ * 
+ * Use this when already running inside an LVGL callback to avoid deadlock.
+ */
+void scene_storage_reload_ui_no_lock(void)
+{
+    ESP_LOGI(TAG, "scene_storage_reload_ui_no_lock called");
+    
+    ui_scene_t scenes[SCENE_STORAGE_MAX_SCENES];
+    size_t count = 0;
+    
+    esp_err_t ret = scene_storage_load(scenes, SCENE_STORAGE_MAX_SCENES, &count);
+    ESP_LOGI(TAG, "scene_storage_load returned %s, count=%d", esp_err_to_name(ret), count);
+    
+    // No lock - caller must already be in LVGL context
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Calling ui_scenes_load_from_sd with %d scenes", count);
+        ui_scenes_load_from_sd(scenes, count);
+        ESP_LOGI(TAG, "UI updated with %d scenes", count);
+    } else {
+        ESP_LOGW(TAG, "Failed to reload scenes for UI: %s", esp_err_to_name(ret));
+        ui_scenes_load_from_sd(NULL, 0);
+    }
+}
+
+/**
+ * @brief Get a scene by index
+ */
+esp_err_t scene_storage_get_by_index(size_t index, ui_scene_t *scene)
+{
+    if (!scene) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (index >= s_scene_count) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    *scene = s_scenes[index];
+    return ESP_OK;
+}
+
+/**
+ * @brief Helper function to write scenes array to JSON file
+ */
+static esp_err_t write_scenes_to_file(const ui_scene_t *scenes, size_t count)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON *scenes_array = cJSON_CreateArray();
+    
+    for (size_t i = 0; i < count; i++) {
+        cJSON *scene_obj = cJSON_CreateObject();
+        cJSON_AddStringToObject(scene_obj, "name", scenes[i].name);
+        cJSON_AddNumberToObject(scene_obj, "brightness", scenes[i].brightness);
+        cJSON_AddNumberToObject(scene_obj, "r", scenes[i].red);
+        cJSON_AddNumberToObject(scene_obj, "g", scenes[i].green);
+        cJSON_AddNumberToObject(scene_obj, "b", scenes[i].blue);
+        cJSON_AddNumberToObject(scene_obj, "w", scenes[i].white);
+        cJSON_AddItemToArray(scenes_array, scene_obj);
+    }
+    
+    cJSON_AddNumberToObject(root, "version", 1);
+    cJSON_AddItemToObject(root, "scenes", scenes_array);
+    
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+    
+    if (!json_str) {
+        ESP_LOGE(TAG, "Failed to serialize JSON");
+        return ESP_FAIL;
+    }
+    
+    FILE *file = fopen(SCENE_STORAGE_PATH, "w");
+    if (!file) {
+        ESP_LOGE(TAG, "Failed to open scenes.json for writing");
+        free(json_str);
+        return ESP_FAIL;
+    }
+    
+    size_t json_len = strlen(json_str);
+    size_t written = fwrite(json_str, 1, json_len, file);
+    fflush(file);
+    fclose(file);
+    free(json_str);
+    
+    if (written != json_len) {
+        ESP_LOGE(TAG, "Failed to write complete JSON (wrote %d of %d)", (int)written, (int)json_len);
+        return ESP_FAIL;
+    }
+    
+    ESP_LOGI(TAG, "Wrote %d bytes to %s", (int)json_len, SCENE_STORAGE_PATH);
+    return ESP_OK;
+}
+
+/**
+ * @brief Update an existing scene's properties
+ */
+esp_err_t scene_storage_update(size_t index, const char *new_name,
+                               uint8_t brightness, uint8_t red, uint8_t green,
+                               uint8_t blue, uint8_t white)
+{
+    if (!new_name || strlen(new_name) == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (index >= s_scene_count) {
+        ESP_LOGE(TAG, "Invalid scene index %d (count=%d)", (int)index, (int)s_scene_count);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    // Check if new name conflicts with another scene (not this one)
+    for (size_t i = 0; i < s_scene_count; i++) {
+        if (i != index && strcmp(s_scenes[i].name, new_name) == 0) {
+            ESP_LOGE(TAG, "Scene name '%s' already exists at index %d", new_name, (int)i);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+    
+    ESP_LOGI(TAG, "Updating scene at index %d: '%s' -> '%s', B=%d R=%d G=%d B=%d W=%d",
+             (int)index, s_scenes[index].name, new_name, brightness, red, green, blue, white);
+    
+    // Update in cache
+    strncpy(s_scenes[index].name, new_name, sizeof(s_scenes[index].name) - 1);
+    s_scenes[index].name[sizeof(s_scenes[index].name) - 1] = '\0';
+    s_scenes[index].brightness = brightness;
+    s_scenes[index].red = red;
+    s_scenes[index].green = green;
+    s_scenes[index].blue = blue;
+    s_scenes[index].white = white;
+    
+    // Write to file
+    esp_err_t ret = write_scenes_to_file(s_scenes, s_scene_count);
+    if (ret != ESP_OK) {
+        // Reload from file to restore consistent state
+        scene_storage_load(s_scenes, SCENE_STORAGE_MAX_SCENES, &s_scene_count);
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "Scene updated successfully");
+    return ESP_OK;
+}
+
+/**
+ * @brief Move a scene to a new position (reorder)
+ */
+esp_err_t scene_storage_reorder(size_t from_index, size_t to_index)
+{
+    if (from_index >= s_scene_count || to_index >= s_scene_count) {
+        ESP_LOGE(TAG, "Invalid reorder indices: from=%d, to=%d (count=%d)",
+                 (int)from_index, (int)to_index, (int)s_scene_count);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (from_index == to_index) {
+        return ESP_OK;  // Nothing to do
+    }
+    
+    ESP_LOGI(TAG, "Reordering scene from index %d to %d", (int)from_index, (int)to_index);
+    
+    // Save the scene being moved
+    ui_scene_t moving_scene = s_scenes[from_index];
+    
+    if (from_index < to_index) {
+        // Moving forward: shift items left
+        for (size_t i = from_index; i < to_index; i++) {
+            s_scenes[i] = s_scenes[i + 1];
+        }
+    } else {
+        // Moving backward: shift items right
+        for (size_t i = from_index; i > to_index; i--) {
+            s_scenes[i] = s_scenes[i - 1];
+        }
+    }
+    
+    // Place the scene at new position
+    s_scenes[to_index] = moving_scene;
+    
+    // Write to file
+    esp_err_t ret = write_scenes_to_file(s_scenes, s_scene_count);
+    if (ret != ESP_OK) {
+        // Reload from file to restore consistent state
+        scene_storage_load(s_scenes, SCENE_STORAGE_MAX_SCENES, &s_scene_count);
+        return ret;
+    }
+    
+    ESP_LOGI(TAG, "Scene reordered successfully");
+    return ESP_OK;
+}

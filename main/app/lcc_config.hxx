@@ -27,6 +27,9 @@ static constexpr uint64_t DEFAULT_BASE_EVENT_ID = 0x0501010122600000ULL;
 /// Default auto-apply duration in seconds
 static constexpr uint16_t DEFAULT_AUTO_APPLY_DURATION_SEC = 10;
 
+/// Default screen timeout in seconds (0 = disabled)
+static constexpr uint16_t DEFAULT_SCREEN_TIMEOUT_SEC = 60;
+
 /// CDI segment for startup behavior settings
 CDI_GROUP(StartupConfig);
 
@@ -48,6 +51,16 @@ CDI_GROUP_ENTRY(auto_apply_duration_sec, Uint16ConfigEntry,
     Default(DEFAULT_AUTO_APPLY_DURATION_SEC),
     Min(0),
     Max(300));
+
+/// Screen timeout for power saving
+CDI_GROUP_ENTRY(screen_timeout_sec, Uint16ConfigEntry,
+    Name("Screen Backlight Timeout (seconds)"),
+    Description("Time in seconds before the screen backlight turns off when idle. "
+                "Touch the screen to wake. Set to 0 to disable (always on). "
+                "Range: 0 or 10-3600 seconds. Default: 60 seconds."),
+    Default(DEFAULT_SCREEN_TIMEOUT_SEC),
+    Min(0),
+    Max(3600));
 
 CDI_GROUP_END();
 

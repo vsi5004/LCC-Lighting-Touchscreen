@@ -85,8 +85,8 @@ static void modal_save_btn_cb(lv_event_t *e)
                                            s_manual_state.blue, s_manual_state.white);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Scene saved successfully");
-            // Refresh the Scene Selector UI
-            scene_storage_reload_ui();
+            // Refresh the Scene Selector UI - already in LVGL context, use no-lock version
+            scene_storage_reload_ui_no_lock();
         } else {
             ESP_LOGE(TAG, "Failed to save scene: %s", esp_err_to_name(ret));
         }

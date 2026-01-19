@@ -35,6 +35,7 @@
 #include "app/scene_storage.h"
 #include "app/lcc_node.h"
 #include "app/fade_controller.h"
+#include "app/screen_timeout.h"
 
 static const char *TAG = "main";
 
@@ -553,6 +554,21 @@ void app_main(void)
                  (unsigned long long)lcc_node_get_base_event_id());
     }
 
+    // Initialize screen timeout module (power saving)
+    ESP_LOGI(TAG, "Initializing screen timeout...");
+    screen_timeout_config_t screen_timeout_cfg = {
+        .ch422g_handle = s_ch422g,
+        .timeout_sec = lcc_node_get_screen_timeout_sec(),
+    };
+    ret = screen_timeout_init(&screen_timeout_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Screen timeout init failed: %s - power saving disabled", 
+                 esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Screen timeout initialized: %u sec (0=disabled)",
+                 screen_timeout_cfg.timeout_sec);
+    }
+
     // Initialize fade controller
     ESP_LOGI(TAG, "Initializing fade controller...");
     ret = fade_controller_init();
@@ -653,11 +669,20 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Initialization complete - entering main loop");
 
-    // Main loop: Report status periodically
+    // Main loop: Run screen timeout tick and report status periodically
+    TickType_t last_status_tick = xTaskGetTickCount();
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-        ESP_LOGI(TAG, "Status - Free heap: %lu bytes, LCC: %s", 
-                 esp_get_free_heap_size(),
-                 lcc_node_get_status() == LCC_STATUS_RUNNING ? "running" : "not running");
+        // Tick screen timeout every 500ms
+        screen_timeout_tick();
+        vTaskDelay(pdMS_TO_TICKS(500));
+        
+        // Report status every 10 seconds
+        if ((xTaskGetTickCount() - last_status_tick) >= pdMS_TO_TICKS(10000)) {
+            last_status_tick = xTaskGetTickCount();
+            ESP_LOGI(TAG, "Status - Free heap: %lu bytes, LCC: %s, Screen: %s", 
+                     esp_get_free_heap_size(),
+                     lcc_node_get_status() == LCC_STATUS_RUNNING ? "running" : "not running",
+                     screen_timeout_is_screen_on() ? "on" : "off");
+        }
     }
 }
