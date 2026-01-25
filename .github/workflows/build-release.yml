@@ -1,0 +1,161 @@
+name: Build and Release Firmware
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+    
+    - name: Setup ESP-IDF
+      uses: espressif/esp-idf-ci-action@v1
+      with:
+        esp_idf_version: v5.1.6
+        target: esp32s3
+    
+    - name: Build firmware
+      run: |
+        . $IDF_PATH/export.sh
+        idf.py build
+    
+    - name: Get version info
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION="dev-$(git rev-parse --short HEAD)"
+        fi
+        COMMIT_HASH=$(git rev-parse --short HEAD)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "commit=$COMMIT_HASH" >> $GITHUB_OUTPUT
+    
+    - name: Create merged binary
+      run: |
+        . $IDF_PATH/export.sh
+        cd build
+        esptool.py --chip esp32s3 merge_bin \
+          -o LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin \
+          --flash_mode dio \
+          --flash_size 16MB \
+          --flash_freq 80m \
+          0x0 bootloader/bootloader.bin \
+          0x8000 partition_table/partition-table.bin \
+          0xf000 ota_data_initial.bin \
+          0x20000 LCCLightingTouchscreen.bin
+    
+    - name: Prepare release files
+      run: |
+        cd build
+        mkdir -p release
+        
+        # Copy individual binaries with version in name
+        cp bootloader/bootloader.bin release/bootloader-${{ steps.version.outputs.commit }}.bin
+        cp partition_table/partition-table.bin release/partition-table-${{ steps.version.outputs.commit }}.bin
+        cp ota_data_initial.bin release/ota_data_initial-${{ steps.version.outputs.commit }}.bin
+        cp LCCLightingTouchscreen.bin release/LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.bin
+        
+        # Copy merged binary
+        cp LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin release/
+        
+        # Copy flasher args for reference
+        cp flasher_args.json release/
+        
+        # Create SHA256 checksums
+        cd release
+        sha256sum * > SHA256SUMS.txt
+        
+        # Create flash instructions file
+        cat > FLASH_INSTRUCTIONS.txt << 'EOF'
+        LCC Lighting Touchscreen Controller - Flash Instructions
+        ========================================================
+        
+        Version: ${{ steps.version.outputs.version }}
+        Commit: ${{ steps.version.outputs.commit }}
+        
+        OPTION 1: Flash merged binary (Easiest)
+        ----------------------------------------
+        esptool.py --chip esp32s3 --port COMX write_flash 0x0 LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin
+        
+        OPTION 2: Flash individual files
+        ---------------------------------
+        esptool.py --chip esp32s3 --port COMX write_flash \
+          --flash_mode dio --flash_freq 80m --flash_size 16MB \
+          0x0 bootloader-${{ steps.version.outputs.commit }}.bin \
+          0x8000 partition-table-${{ steps.version.outputs.commit }}.bin \
+          0xf000 ota_data_initial-${{ steps.version.outputs.commit }}.bin \
+          0x20000 LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.bin
+        
+        For detailed instructions including GUI tools, see:
+        https://github.com/vsi5004/LCC-Lighting-Touchscreen/blob/main/FLASHING.md
+        
+        After flashing, configure your device via SD card:
+        - nodeid.txt: Your LCC node ID (e.g., 05.01.01.01.9F.60.00)
+        - scenes.json: Your lighting scenes
+        - splash.jpg: Optional custom boot image (800x480)
+        EOF
+    
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: build/release/*
+        body: |
+          ## LCC Lighting Touchscreen Controller ${{ steps.version.outputs.version }}
+          
+          **Commit:** `${{ steps.version.outputs.commit }}`
+          **Build Date:** ${{ github.event.head_commit.timestamp }}
+          
+          ### 📦 Downloads
+          
+          **Quick Start:** Download `LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin` and flash to address `0x0`
+          
+          **Advanced:** Download individual binaries and flash to respective addresses (see `FLASH_INSTRUCTIONS.txt`)
+          
+          ### 📋 Files Included
+          
+          - `LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin` - Complete firmware image (flash to 0x0)
+          - `LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}.bin` - Application binary only (flash to 0x20000)
+          - `bootloader-${{ steps.version.outputs.commit }}.bin` - Bootloader (flash to 0x0)
+          - `partition-table-${{ steps.version.outputs.commit }}.bin` - Partition table (flash to 0x8000)
+          - `ota_data_initial-${{ steps.version.outputs.commit }}.bin` - OTA data (flash to 0xf000)
+          - `flasher_args.json` - Flash configuration reference
+          - `FLASH_INSTRUCTIONS.txt` - Quick flash commands
+          - `SHA256SUMS.txt` - File checksums for verification
+          
+          ### 📖 Documentation
+          
+          See [FLASHING.md](https://github.com/vsi5004/LCC-Lighting-Touchscreen/blob/main/FLASHING.md) for detailed flashing instructions using:
+          - esptool.py (command line)
+          - ESP Flash Download Tool (Windows GUI)
+          - Web-based flashers
+          
+          ### ⚙️ Configuration Required
+          
+          After flashing, prepare your SD card with:
+          1. `nodeid.txt` - Your unique LCC node ID
+          2. `scenes.json` - Your lighting scenes (optional, can be created in UI)
+          3. `splash.jpg` - Custom boot image (optional, 800x480px)
+          
+          See [README.md](https://github.com/vsi5004/LCC-Lighting-Touchscreen#sd-card-setup) for full configuration details.
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Upload artifacts (for manual runs)
+      if: "!startsWith(github.ref, 'refs/tags/')"
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}
+        path: build/release/*
+        retention-days: 30

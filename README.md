@@ -9,6 +9,7 @@ An ESP32-S3–based LCC/OpenLCB lighting scene controller with a touch LCD user 
 
 ## Overview
 
+![Photo of mounted touchscreen on layout](./docs/img/touchsreen_photo.jpg)
 This device connects to an LCC (Layout Command Control) / OpenLCB CAN bus and sends RGBW lighting commands to follower lighting controller boards. It provides an intuitive touch interface for:
 
 - **Manual Control** — Real-time RGBW + brightness adjustment via sliders
@@ -33,7 +34,7 @@ The controller does **not** drive LEDs directly; it acts as a command station se
 | CAN | Onboard transceiver (TX: GPIO15, RX: GPIO16) |
 | I/O Expander | CH422G (I2C) — controls backlight & SD CS |
 
-### Connections
+### Internal Pin Connections
 
 | Interface | Pins |
 |-----------|------|
@@ -50,12 +51,8 @@ for convenient viewing on a layout fascia or control panel.
 
 ![Angled Mount Render](docs/img/angled_mount_render.png)
 
-**Included Files:**
-- `Waveshare ESP32-S3-Touch_LCD-4.3B Angled Mount v4.f3d` — Fusion 360 source file
-- `Waveshare ESP32-S3-Touch_LCD-4.3B Angled Mount v4.stl` — Print-ready STL
-
 The mount provides an ergonomic viewing angle and can be attached to a fascia or
-mounted on a surface near the layout. The mount allows for rear access to the SD Card even after the screen is affixed with double sided tape. Mounting to the layout can be acheived with a variety of commonly available fasteners as long as the head is smaller than 8.2mm in diameter.
+mounted on a surface near the layout. There is a readme in the `printed_mounts/` directory with more details. Mounting to the layout can be acheived with a variety of commonly available fasteners as long as the head is smaller than 8.2mm in diameter.
 
 ## Software Stack
 
@@ -67,59 +64,6 @@ mounted on a surface near the layout. The mount allows for rear access to the SD
 | Touch Driver | esp_lcd_touch_gt911 |
 | Image Decoder | esp_jpeg |
 
-## Project Structure
-
-```
-LCCLightingTouchscreen/
-├── CMakeLists.txt              # Top-level build file
-├── LICENSE                     # BSD 2-Clause license
-├── lv_conf.h                   # LVGL configuration (root level)
-├── sdkconfig.defaults          # ESP-IDF configuration defaults
-├── sdkconfig                   # Full ESP-IDF configuration
-├── partitions.csv              # Flash partition table
-├── components/
-│   ├── OpenMRN/                # LCC/OpenLCB stack (git submodule)
-│   └── board_drivers/          # Hardware abstraction layer
-│       ├── CMakeLists.txt
-│       ├── ch422g.c            # I2C expander driver
-│       ├── waveshare_lcd.c     # Display initialization
-│       ├── waveshare_touch.c   # Touch input handling
-│       ├── waveshare_sd.c      # SD card driver
-│       └── include/
-│           ├── ch422g.h
-│           ├── waveshare_lcd.h
-│           ├── waveshare_touch.h
-│           └── waveshare_sd.h
-├── main/
-│   ├── CMakeLists.txt
-│   ├── main.c                  # Entry point, task creation
-│   ├── lv_conf.h               # LVGL configuration (main level)
-│   ├── Kconfig.projbuild       # Project-specific Kconfig options
-│   ├── idf_component.yml       # ESP Component Registry dependencies
-│   ├── app/                    # Application logic
-│   │   ├── app.h               # App-wide includes
-│   │   ├── fade_controller.c/.h # Lighting fade state machine
-│   │   ├── lcc_node.cpp/.h     # OpenMRN integration
-│   │   ├── lcc_config.hxx      # CDI configuration definition
-│   │   ├── scene_storage.c/.h  # SD card scene persistence
-│   │   └── screen_timeout.c/.h # Backlight power saving with fade
-│   └── ui/                     # LVGL screens
-│       ├── ui.h                # UI-wide includes
-│       ├── ui_common.c/.h      # LVGL init, mutex, color preview
-│       ├── ui_main.c           # Main tabview screen
-│       ├── ui_manual.c         # Manual RGBW control tab
-│       └── ui_scenes.c         # Scene card carousel tab
-├── docs/                       # Design documentation
-│   ├── ARCHITECTURE.md         # System design, task model
-│   ├── INTERFACES.md           # Hardware interfaces, GPIO mapping
-│   ├── SPEC.md                 # Feature specification
-│   ├── TEST_PLAN.md            # Test cases
-│   ├── AGENTS.md               # AI coding guidelines
-│   └── img/                    # Documentation images
-├── printed_mounts/             # 3D printable enclosure models
-│   ├── *.f3d                   # Fusion 360 source
-│   └── *.stl                   # Slicer-ready STL
-```
 
 ## Building
 
@@ -158,17 +102,52 @@ This project is configured for the [ESP-IDF VS Code Extension](https://marketpla
 4. Flash: `ESP-IDF: Flash your project`
 5. Monitor: `ESP-IDF: Monitor your device`
 
+## Flashing Firmware
+
+Pre-built firmware binaries are available from the [Releases](https://github.com/vsi5004/LCC-Lighting-Touchscreen/releases) page.
+
+### Quick Flash (Recommended)
+
+Download the merged binary from the latest release and flash to address `0x0`:
+
+```bash
+esptool.py --chip esp32s3 --port COMX write_flash 0x0 LCCLightingTouchscreen-vX.X.X-XXXXXXX-merged.bin
+```
+
+### Detailed Instructions
+
+For complete flashing instructions including:
+- Individual binary flashing
+- ESP Flash Download Tool (Windows GUI)
+- Web-based flashers
+- Troubleshooting
+- Post-flash configuration
+
+See **[FLASHING.md](FLASHING.md)** for the full guide.
+
 ## SD Card Setup
 
 The device reads configuration and scenes from the SD card root:
 
 ### `nodeid.txt`
 
-Plain text file containing the 6-byte LCC node ID in dotted hex format:
+Plain text file containing the 48-bit LCC node ID in dotted hex format:
 
 ```
 05.01.01.01.9F.60.00
 ```
+
+**Format:** 7 groups of 2 hex digits separated by periods (case insensitive, no spaces).
+
+**Generating a Unique Node ID:**
+- Use the [OpenLCB Node ID Registry](https://registry.openlcb.org/)
+- Ensure uniqueness on your LCC network
+
+**Compile-Time Default:**
+
+The firmware includes a default node ID (`LCC_DEFAULT_NODE_ID` in `main/app/lcc_node.cpp`) that is used only if `nodeid.txt` is missing from the SD card. For production use, always create a `nodeid.txt` file with your unique node ID.
+
+See [FLASHING.md - Node ID Configuration](FLASHING.md#node-id-configuration) for details on customizing the compiled default.
 
 ### `openmrn_config`
 
@@ -270,7 +249,7 @@ The following settings can be configured via any LCC configuration tool (JMRI, e
 ## User Interface
 
 ### Scene Selector Tab (Default)
-
+![Scene selector photo](./docs/img/scene_select_photo.jpg)
 - Horizontal swipeable card carousel
 - Color preview circle on each card showing approximate light output
 - Center-snapping scroll behavior with blue selection highlight
@@ -283,7 +262,7 @@ The following settings can be configured via any LCC configuration tool (JMRI, e
 ### Scene Edit Modal
 
 Tap the edit button (✏️) on any scene card to open the edit modal:
-
+![Scene edit photo](./docs/img/scene_edit_photo.jpg)
 - **Scene name** text input with on-screen keyboard
 - **RGBW + Brightness sliders** (0-255 each) with real-time preview
 - **Color preview circle** updates as you adjust values
@@ -292,7 +271,7 @@ Tap the edit button (✏️) on any scene card to open the edit modal:
 - **Save** applies changes to SD card, **Cancel** discards
 
 ### Manual Control Tab
-
+![Manual control photo](./docs/img/manual_control_photo.jpg)
 - Five sliders: Brightness, Red, Green, Blue, White
 - **Color preview circle** showing approximate light output from current settings
 - **Apply** button sends current values immediately to LCC bus
