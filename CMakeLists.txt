@@ -8,3 +8,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(LCCLightingTouchscreen)
+
+# Ensure LVGL finds our lv_conf.h from project root
+idf_build_set_property(COMPILE_OPTIONS "-I${CMAKE_SOURCE_DIR}" APPEND)
