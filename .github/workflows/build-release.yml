@@ -23,6 +23,9 @@ jobs:
         target: esp32s3
         command: idf.py build
     
+    - name: Fix build directory permissions
+      run: sudo chown -R $USER:$USER build/
+    
     - name: Get version info
       id: version
       run: |
