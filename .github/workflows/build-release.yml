@@ -16,16 +16,15 @@ jobs:
       with:
         submodules: 'recursive'
     
-    - name: Setup ESP-IDF
+    - name: Build firmware
       uses: espressif/esp-idf-ci-action@v1
       with:
         esp_idf_version: v5.1.6
         target: esp32s3
+        command: idf.py build
     
-    - name: Build firmware
-      run: |
-        . $IDF_PATH/export.sh
-        idf.py build
+    - name: Fix build directory permissions
+      run: sudo chown -R $USER:$USER build/
     
     - name: Get version info
       id: version
@@ -41,7 +40,7 @@ jobs:
     
     - name: Create merged binary
       run: |
-        . $IDF_PATH/export.sh
+        pip install esptool
         cd build
         esptool.py --chip esp32s3 merge_bin \
           -o LCCLightingTouchscreen-${{ steps.version.outputs.version }}-${{ steps.version.outputs.commit }}-merged.bin \
