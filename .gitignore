@@ -38,7 +38,6 @@ sdkconfig
 **/components/.idf/
 # For modern ESP-IDF component manager
 managed_components/
-!managed_components/lv_conf.h
 # If ESP-IDF tools are installed/referenced locally to the project
 .espressif/
 
